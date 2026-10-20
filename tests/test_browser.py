@@ -27,7 +27,7 @@ def test_real_browser_edits_filters_and_saves_project(tmp_path, config):
         executable = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
     if not executable or not Path(executable).is_file():
         pytest.fail('Set CHROME_PATH to a Chrome executable')
-    process = subprocess.Popen([sys.executable, 'app.py', '--config', str(config_path), '--no-show', '--port', str(port)], cwd=root)
+    process = subprocess.Popen([sys.executable, 'app.py', '--browser', '--config', str(config_path), '--no-show', '--port', str(port)], cwd=root)
     try:
         for _ in range(100):
             if process.poll() is not None:

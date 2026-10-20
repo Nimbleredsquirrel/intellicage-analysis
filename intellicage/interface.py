@@ -5,13 +5,12 @@ import copy
 import io
 import zipfile
 import json
-import os
 import tempfile
 from pathlib import Path
 from uuid import uuid4
 
 from fastapi import HTTPException, Request
-from nicegui import app, run, ui
+from nicegui import app, native, run, ui
 import yaml
 import polars as pl
 
@@ -126,15 +125,16 @@ h1,h2{letter-spacing:-.025em}.plotly-graph-div{border-radius:12px}.muted{color:#
         with ui.left_drawer(value=True).classes('p-5').props('width=300') as self.drawer:
             ui.label('your data').classes('text-xl font-bold')
             ui.label('Choose an IntelliCage export folder, ZIP, or saved .icage project.').classes('muted')
-            # relative paths preserve the animal gate subfolder
-            ui.html(f'''<label style="display:block;padding:12px;background:#e7efea;border-radius:8px;cursor:pointer">
-choose export folder<input style="display:none" type="file" webkitdirectory multiple onchange="
-const status=document.getElementById('folder-status-{self.token}');
-status.textContent='uploading…';const form=new FormData();
-for(const f of this.files){{if(f.name.toLowerCase().endsWith('.txt'))form.append('files',f,f.webkitRelativePath);}}
-fetch('/imports/{self.token}',{{method:'POST',body:form}}).then(async r=>{{const v=await r.json();
-status.textContent=r.ok?v.datasets+' exports ready — click load folder':v.detail;}}).catch(e=>status.textContent=e.message);"></label><small id="folder-status-{self.token}"></small>''', sanitize=False)
-            ui.button('load folder', on_click=self.load_pending).props('flat').classes('w-full').mark('load-folder')
+            if not self.native:
+                # relative paths preserve the animal gate subfolder
+                ui.html(f'''<label style="display:block;padding:12px;background:#e7efea;border-radius:8px;cursor:pointer">
+    choose export folder<input style="display:none" type="file" webkitdirectory multiple onchange="
+    const status=document.getElementById('folder-status-{self.token}');
+    status.textContent='uploading…';const form=new FormData();
+    for(const f of this.files){{if(f.name.toLowerCase().endsWith('.txt'))form.append('files',f,f.webkitRelativePath);}}
+    fetch('/imports/{self.token}',{{method:'POST',body:form}}).then(async r=>{{const v=await r.json();
+    status.textContent=r.ok?v.datasets+' exports ready — click load folder':v.detail;}}).catch(e=>status.textContent=e.message);"></label><small id="folder-status-{self.token}"></small>''', sanitize=False)
+                ui.button('load folder', on_click=self.load_pending).props('flat').classes('w-full').mark('load-folder')
             ui.upload(label='ZIP / saved project', auto_upload=True, max_file_size=MAX_UPLOAD,
                       on_upload=self.upload, on_rejected=lambda: ui.notify('File exceeds the upload limit', type='negative')).props('accept=.zip,.icage').classes('w-full')
             if self.local:
@@ -418,13 +418,17 @@ status.textContent=r.ok?v.datasets+' exports ready — click load folder':v.deta
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description='IntelliCage explorer')
-    parser.add_argument('--desktop', action='store_true')
-    parser.add_argument('--web', action='store_true', help='accept remote connections')
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument('--desktop', action='store_true', help=argparse.SUPPRESS)
+    mode.add_argument('--browser', action='store_true', help=argparse.SUPPRESS)
     parser.add_argument('--config', type=Path, default=ROOT / 'config.yaml')
-    parser.add_argument('--port', type=int, default=int(os.environ.get('PORT', 8080)))
+    parser.add_argument('--port', type=int, default=None)
     parser.add_argument('--no-show', action='store_true')
     args = parser.parse_args(argv)
-    if args.desktop and args.web: parser.error('Choose desktop or web mode')
+    desktop = not args.browser
+    port = args.port if args.port is not None else native.find_open_port()
+    if desktop:
+        app.native.settings['ALLOW_DOWNLOADS'] = True
     config = args.config if args.config.is_file() else None
     if config:
         cfg = yaml.safe_load(config.read_text())
@@ -433,7 +437,7 @@ def main(argv=None):
             config = None
     @ui.page('/')
     def index():
-        Explorer(config, local=not args.web, native=args.desktop)
-    ui.run(host='0.0.0.0' if args.web else '127.0.0.1', port=args.port, native=args.desktop,
-           title='IntelliCage explorer', window_size=(1440, 960) if args.desktop else None,
+        Explorer(config, local=True, native=desktop)
+    ui.run(host='127.0.0.1', port=port, native=desktop,
+           title='IntelliCage explorer', window_size=(1440, 960) if desktop else None,
            reload=False, show=not args.no_show, show_welcome_message=False)

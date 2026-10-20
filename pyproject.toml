@@ -1,7 +1,7 @@
 [project]
 name = "intellicage-analysis"
 version = "0.2.0"
-description = "IntelliCage analysis for desktop and browser"
+description = "IntelliCage desktop analysis"
 requires-python = ">=3.12,<3.15"
 dependencies = [
     "polars>=2.0,<3",
@@ -14,10 +14,10 @@ dependencies = [
     "plotly>=7.1,<8",
     "pyyaml>=6.0.3,<7",
     "nicegui>=3.18,<4",
+    "pywebview>=6.2.1,<7",
 ]
 
 [project.optional-dependencies]
-desktop = ["pywebview>=6.2.1,<7"]
 export = ["kaleido>=1.1,<2"]
 
 [tool.poetry]

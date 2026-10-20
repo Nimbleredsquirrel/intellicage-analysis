@@ -223,19 +223,28 @@ async def test_plot_events_and_csv_buttons(config):
         assert page.graph_area.descendants()
 
 
-def test_app_launch_modes_and_missing_local_datasets(tmp_path,monkeypatch):
+def test_app_launch_modes_and_missing_local_datasets(tmp_path, monkeypatch):
     import yaml
     import intellicage.interface as interface
-    calls=[]
-    monkeypatch.setattr(ui,'run',lambda **kwargs:calls.append(kwargs))
-    interface.main(['--web','--no-show','--config',str(tmp_path/'absent'),'--port','9000'])
-    assert calls[-1]['host']=='0.0.0.0'
-    interface.main(['--desktop','--config',str(tmp_path/'absent')])
+    calls = []
+    monkeypatch.setattr(ui, 'run', lambda **kwargs: calls.append(kwargs))
+    monkeypatch.setattr(interface.native, 'find_open_port', lambda: 9123)
+    interface.main(['--no-show', '--config', str(tmp_path/'absent')])
+    assert calls[-1]['host'] == '127.0.0.1'
     assert calls[-1]['native']
-    path=tmp_path/'config.yaml';path.write_text(yaml.safe_dump({'datasets':[{'path':'absent'}]}))
-    interface.main(['--config',str(path)])
-    assert calls[-1]['host']=='127.0.0.1'
-    with pytest.raises(SystemExit):interface.main(['--desktop','--web'])
+    assert calls[-1]['port'] == 9123
+    assert app.native.settings['ALLOW_DOWNLOADS']
+    interface.main(['--desktop', '--port', '9000', '--config', str(tmp_path/'absent')])
+    assert calls[-1]['native'] and calls[-1]['port'] == 9000
+    interface.main(['--browser', '--config', str(tmp_path/'absent')])
+    assert not calls[-1]['native']
+    assert calls[-1]['host'] == '127.0.0.1'
+    path = tmp_path/'config.yaml'
+    path.write_text(yaml.safe_dump({'datasets': [{'path': 'absent'}]}))
+    interface.main(['--config', str(path)])
+    assert calls[-1]['native']
+    with pytest.raises(SystemExit): interface.main(['--desktop', '--browser'])
+    with pytest.raises(SystemExit): interface.main(['--web'])
 
 
 @pytest.mark.asyncio

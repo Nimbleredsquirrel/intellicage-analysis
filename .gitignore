@@ -9,3 +9,8 @@ htmlcov/
 results/
 .env
 .env.*
+
+# desktop build output
+build/
+dist/
+*.spec
