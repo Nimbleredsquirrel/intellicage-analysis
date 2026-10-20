@@ -23,10 +23,10 @@ async def wait_loaded(page):
 @pytest.mark.asyncio
 async def test_dashboard_filters_edits_and_downloads(config):
     pages = []
-    def root():
+    async def root():
         page = Explorer(None, local=True, native=False)
         pages.append(page)
-        page.install(Project(config))
+        await page.install(Project(config))
     async with user_simulation(root) as user:
         app.router.routes.insert(0, APIRoute('/imports/{token}', import_folder, methods=['POST']))
         await user.open('/')
@@ -56,7 +56,7 @@ async def test_dashboard_filters_edits_and_downloads(config):
 @pytest.mark.asyncio
 async def test_empty_start_and_folder_import(config):
     pages = []
-    def root():
+    async def root():
         page = Explorer(None, local=False, native=False)
         pages.append(page)
     async with user_simulation(root) as user:
@@ -83,9 +83,9 @@ async def test_settings_labels_colors_and_native_folder(config, tmp_path, monkey
     from nicegui import app
     import webview
     pages=[]
-    def root():
+    async def root():
         page=Explorer(None,local=True,native=True);pages.append(page)
-        page.install(Project(config))
+        await page.install(Project(config))
     async with user_simulation(root) as user:
         await user.open('/');page=pages[0];await wait_loaded(page)
         with user.client:
@@ -139,7 +139,7 @@ async def test_upload_zip_project_and_empty_selection(config,tmp_path):
     from types import SimpleNamespace
     from pathlib import Path
     pages=[]
-    def root(): pages.append(Explorer(None,local=True,native=False))
+    async def root(): pages.append(Explorer(None,local=True,native=False))
     async with user_simulation(root) as user:
         await user.open('/');page=pages[0]
         class File:
@@ -180,7 +180,7 @@ async def test_initial_config_error_handling_busy_and_no_project(config,tmp_path
     import yaml
     path=tmp_path/'config.yaml';path.write_text(yaml.safe_dump(config))
     pages=[]
-    def root():pages.append(Explorer(path,local=True,native=False))
+    async def root():pages.append(Explorer(path,local=True,native=False))
     async with user_simulation(root) as user:
         await user.open('/');page=pages[0]
         for _ in range(100):
@@ -203,8 +203,8 @@ async def test_initial_config_error_handling_busy_and_no_project(config,tmp_path
 @pytest.mark.asyncio
 async def test_plot_events_and_csv_buttons(config):
     pages=[]
-    def root():
-        page=Explorer(None,local=False,native=False);pages.append(page);page.install(Project(config))
+    async def root():
+        page=Explorer(None,local=False,native=False);pages.append(page);await page.install(Project(config))
     async with user_simulation(root) as user:
         await user.open('/');page=pages[0];await wait_loaded(page)
         user.find(marker='plot').trigger('plotly_relayout',{'title.text':'direct edit'})
@@ -230,6 +230,7 @@ def test_app_launch_modes_and_missing_local_datasets(tmp_path, monkeypatch):
     monkeypatch.setattr(interface.native, 'find_open_port', lambda: 9123)
     interface.main(['--no-show', '--config', str(tmp_path/'absent')])
     assert calls[-1]['host'] == '127.0.0.1'
+    assert calls[-1]['title'] == 'intellicage analysis'
     assert calls[-1]['native']
     assert calls[-1]['port'] == 9123
     assert app.native.settings['ALLOW_DOWNLOADS']
@@ -250,7 +251,7 @@ def test_app_launch_modes_and_missing_local_datasets(tmp_path, monkeypatch):
 async def test_folder_upload_rejects_unsafe_paths_and_limits(config,monkeypatch):
     import intellicage.interface as interface
     pages=[]
-    def root():pages.append(Explorer(None,local=False,native=False))
+    async def root():pages.append(Explorer(None,local=False,native=False))
     async with user_simulation(root) as user:
         app.router.routes.insert(0,APIRoute('/imports/{token}',import_folder,methods=['POST']))
         await user.open('/');page=pages[0]
@@ -270,7 +271,7 @@ async def test_folder_upload_rejects_unsafe_paths_and_limits(config,monkeypatch)
 async def test_invalid_initial_configuration_stays_in_empty_app(tmp_path):
     path=tmp_path/'bad.yaml';path.write_text('datasets: [invalid')
     pages=[]
-    def root():pages.append(Explorer(path,local=False,native=False))
+    async def root():pages.append(Explorer(path,local=False,native=False))
     async with user_simulation(root) as user:
         await user.open('/')
         await asyncio.sleep(.3)
@@ -282,8 +283,8 @@ async def test_invalid_initial_configuration_stays_in_empty_app(tmp_path):
 async def test_activity_sections_default_windows_and_custom_day_night(config):
     config['analyses']='all'
     pages=[]
-    def root():
-        page=Explorer(None,local=True,native=False);pages.append(page);page.install(Project(config))
+    async def root():
+        page=Explorer(None,local=True,native=False);pages.append(page);await page.install(Project(config))
     async with user_simulation(root) as user:
         await user.open('/');page=pages[0];await wait_loaded(page)
         assert [(start.value,end.value) for _,start,end in page.window_inputs]==[('08:00','20:00'),('20:00','08:00')]
@@ -311,10 +312,10 @@ async def test_activity_sections_default_windows_and_custom_day_night(config):
 @pytest.mark.asyncio
 async def test_table_previews_are_built_only_when_opened(config):
     pages = []
-    def root():
+    async def root():
         page = Explorer(None, local=True, native=True)
         pages.append(page)
-        page.install(Project(config))
+        await page.install(Project(config))
     async with user_simulation(root) as user:
         await user.open('/')
         page = pages[0]
@@ -349,7 +350,7 @@ async def test_long_operation_shows_status_and_restores_controls():
     from threading import Event
     pages = []
     release = Event()
-    def root():
+    async def root():
         pages.append(Explorer(None, local=True, native=True))
     def slow_load():
         assert release.wait(5)
@@ -381,7 +382,7 @@ async def test_plus_adds_multiple_folders_and_skips_overlapping_exports(config, 
     dialog = AsyncMock(return_value=paths)
     monkeypatch.setattr(app.native, 'main_window', SimpleNamespace(
         create_file_dialog=dialog, signal_server_shutdown=lambda: None))
-    def root():
+    async def root():
         pages.append(Explorer(None, local=True, native=True))
     async with user_simulation(root) as user:
         await user.open('/')
@@ -431,7 +432,7 @@ async def test_native_open_project_restores_file_and_handles_cancel(config, tmp_
     monkeypatch.setattr(app.native, 'main_window', SimpleNamespace(
         create_file_dialog=dialog, signal_server_shutdown=lambda: None))
     pages = []
-    def root():
+    async def root():
         pages.append(Explorer(None, local=True, native=True))
     async with user_simulation(root) as user:
         await user.open('/')
@@ -458,10 +459,10 @@ async def test_remove_folders_updates_results_and_keeps_source_files(config, tmp
     pages = []
     source = Path(config['datasets'][0]['path'])
     original = hashlib.sha256((source/'Visit.txt').read_bytes()).hexdigest()
-    def root():
+    async def root():
         page = Explorer(None, local=True, native=True)
         pages.append(page)
-        page.install(Project(config))
+        await page.install(Project(config))
     async with user_simulation(root) as user:
         await user.open('/')
         page = pages[0]
@@ -511,10 +512,10 @@ async def test_remove_folders_updates_results_and_keeps_source_files(config, tmp
 async def test_failed_folder_removal_preserves_current_project(config, monkeypatch):
     import intellicage.interface as interface
     pages = []
-    def root():
+    async def root():
         page = Explorer(None, local=True, native=True)
         pages.append(page)
-        page.install(Project(config))
+        await page.install(Project(config))
     async with user_simulation(root) as user:
         await user.open('/')
         page = pages[0]
@@ -529,3 +530,126 @@ async def test_failed_folder_removal_preserves_current_project(config, monkeypat
         assert len(page.folder_remove_buttons) == 2
         assert all(button.enabled for button in page.folder_remove_buttons)
         assert user.notify.contains('could not rebuild')
+
+
+def visible_plot(page):
+    return next(e for e in page.graph_area.descendants() if isinstance(e, ui.plotly)).figure
+
+
+def plotted_groups(page):
+    return {trace['meta']['group'] for trace in visible_plot(page)['data']}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('metric', ['visits_n', 'visits_duration_total_s'])
+async def test_folder_changes_refresh_the_visible_chart_without_changing_page(config, metric):
+    config['analyses'] = 'all'
+    pages = []
+    async def root():
+        page = Explorer(None, local=True, native=True)
+        pages.append(page)
+        await page.install(Project(config))
+    async with user_simulation(root) as user:
+        await user.open('/')
+        page = pages[0]
+        graph = next(a['name'] for a in page.project.analyses if a.get('table') == 'mouse_summary' and a.get('value') == metric)
+        with user.client:
+            page.graph_select.set_value(graph)
+            await page.show_graph()
+            page.project.set_selection({'groups': ['control', 'ko'], 'phases': ['phase 1'],
+                                        'exclude_mice': [{'group': 'ko', 'lot': 'lot 2', 'animal': 2}]})
+            page.project.edit_layout(graph, {'title.text': 'my graph'})
+            await page.show_graph()
+        assert plotted_groups(page) == {'control', 'ko'}
+        original_p = page.project.result(graph)['stats']['test']['p'][0]
+        # cache another chart before changing the source data
+        other = next(a['name'] for a in page.project.analyses if a.get('value') == 'licks_n' and a['table'] == 'mouse_summary')
+        page.project.result(other)
+        removed = page.project.datasets[0]
+        with user.client:
+            await page.remove_folder(removed.path)
+        assert page.name == graph and page.section.value == 'Visits'
+        assert plotted_groups(page) == {'ko'}
+        assert visible_plot(page)['layout']['title']['text'] == 'my graph'
+        assert set(page.project.result(other)['data']['group']) == {'ko'}
+        with user.client:
+            await page.add_folders([removed.path])
+        assert page.name == graph and page.section.value == 'Visits'
+        assert plotted_groups(page) == {'control', 'ko'}
+        assert visible_plot(page)['layout']['title']['text'] == 'my graph'
+        restored = next(ds for ds in page.project.datasets if ds.path == removed.path)
+        assert (restored.group, restored.lot, restored.phase) == (removed.group, removed.lot, removed.phase)
+        assert set(page.project.result(other)['data']['group']) == {'control', 'ko'}
+        assert page.project.groups == ['control', 'ko']
+        assert page.project.result(graph)['stats']['test']['p'][0] == pytest.approx(original_p)
+        assert page.project.selection['exclude_mice'] == [{'group': 'ko', 'lot': 'lot 2', 'animal': 2}]
+        ko_points = next(t for t in visible_plot(page)['data'] if t['meta'] == {'group': 'ko', 'role': 'mice', 'period': ''})
+        assert len(ko_points['customdata']) == 2
+        # restoring after the last folder was removed must retain its phase too
+        with user.client:
+            for ds in list(page.project.datasets):
+                await page.remove_folder(ds.path)
+            await page.add_folders([removed.path])
+        assert plotted_groups(page) == {'control'}
+        assert page.project.datasets[0].phase == removed.phase
+
+
+@pytest.mark.asyncio
+async def test_old_render_cannot_overwrite_the_latest_graph(config, monkeypatch):
+    from threading import Event
+    config['analyses'] = 'all'
+    pages = []
+    async def root():
+        page = Explorer(None, local=True, native=True)
+        pages.append(page)
+        await page.install(Project(config))
+    async with user_simulation(root) as user:
+        await user.open('/')
+        page = pages[0]
+        first, second = [a['name'] for a in page.project.analyses[:2]]
+        started, release = Event(), Event()
+        result = page.project.result
+        def delayed(name):
+            if name == first:
+                started.set()
+                assert release.wait(5)
+            return result(name)
+        monkeypatch.setattr(page.project, 'result', delayed)
+        with user.client:
+            page.name = first
+            old = asyncio.create_task(page.show_graph())
+            try:
+                for _ in range(100):
+                    if started.is_set(): break
+                    await asyncio.sleep(.01)
+                assert started.is_set()
+                page.name = second
+                latest = asyncio.create_task(page.show_graph())
+                await asyncio.sleep(.01)
+            finally:
+                release.set()
+            await asyncio.gather(old, latest)
+        assert visible_plot(page)['layout']['title']['text'] == next(a['title'] for a in page.project.analyses if a['name'] == second)
+
+
+@pytest.mark.asyncio
+async def test_readding_original_folder_after_opening_saved_project_preserves_phase(config, tmp_path):
+    config['analyses'] = 'all'
+    config['datasets'][0]['phase'] = config['datasets'][1]['phase'] = 'Phase 3'
+    original_path = Path(config['datasets'][0]['path'])
+    saved = Project(config).save()
+    pages = []
+    async def root():
+        page = Explorer(None, local=True, native=True)
+        pages.append(page)
+        await page.install(Project.open(saved, tmp_path/'opened'))
+    async with user_simulation(root) as user:
+        await user.open('/')
+        page = pages[0]
+        removed = page.project.datasets[0]
+        assert removed.path != original_path
+        with user.client:
+            await page.remove_folder(removed.path)
+            await page.add_folders([original_path])
+        assert plotted_groups(page) == {'control', 'ko'}
+        assert next(ds for ds in page.project.datasets if ds.path == original_path).phase == 'Phase 3'

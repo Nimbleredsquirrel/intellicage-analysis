@@ -234,6 +234,7 @@ class Project:
                 source = path / safe_name(name)
                 if hashlib.sha256(source.read_bytes()).hexdigest() != expected:
                     raise ValueError('Project input checksum mismatch')
+            dataset.setdefault('source_path', provenance['path'])
             dataset['path'] = str(path)
         return cls(cfg)
 

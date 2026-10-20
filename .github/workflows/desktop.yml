@@ -23,23 +23,23 @@ jobs:
           python-version: '3.14'
       - run: pip install poetry==2.5.1
       - run: poetry sync --only main,build --all-extras
-      - run: poetry run nicegui-pack --name IntelliCage --onedir --windowed --noconfirm app.py
+      - run: poetry run nicegui-pack --name "intellicage analysis" --onedir --windowed --noconfirm app.py
       - name: check mac executable
         if: runner.os == 'macOS'
-        run: dist/IntelliCage/IntelliCage --help
+        run: '"dist/intellicage analysis/intellicage analysis" --help'
       - name: check windows executable
         if: runner.os == 'Windows'
         run: |
-          & .\dist\IntelliCage\IntelliCage.exe --help
+          & ".\dist\intellicage analysis\intellicage analysis.exe" --help
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: archive mac app
         if: runner.os == 'macOS'
-        run: ditto -c -k --sequesterRsrc --keepParent dist/IntelliCage.app dist/IntelliCage-macOS.zip
+        run: ditto -c -k --sequesterRsrc --keepParent 'dist/intellicage analysis.app' dist/intellicage-analysis-macOS.zip
       - name: archive windows app
         if: runner.os == 'Windows'
-        run: Compress-Archive -Path dist/IntelliCage -DestinationPath dist/IntelliCage-Windows.zip
+        run: Compress-Archive -Path 'dist/intellicage analysis' -DestinationPath dist/intellicage-analysis-Windows.zip
       - uses: actions/upload-artifact@v4
         with:
-          name: IntelliCage-${{ matrix.os }}
-          path: dist/IntelliCage-*.zip
+          name: intellicage-analysis-${{ matrix.os }}
+          path: dist/intellicage-analysis-*.zip
           if-no-files-found: error

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import copy
 import io
 import zipfile
@@ -24,6 +25,7 @@ from .timebins import period_windows
 
 ROOT = Path(__file__).resolve().parents[1]
 IMPORTS = {}
+APP_NAME = 'intellicage analysis'
 
 
 @app.post('/imports/{token}')
@@ -63,6 +65,10 @@ async def import_folder(token: str, request: Request):
         raise HTTPException(400, str(exc)) from exc
 
 
+def source_paths(dataset):
+    return {Path(path).expanduser().resolve() for path in [dataset['path'], dataset.get('source_path')] if path}
+
+
 class Explorer:
     def __init__(self, config: Path | None, local: bool, native: bool):
         self.config, self.local, self.native = config, local, native
@@ -70,6 +76,10 @@ class Explorer:
         self.pending_specs = None
         self.name = None
         self.busy = False
+        self.dataset_labels = {}
+        self.updating_choices = False
+        self.render_version = 0
+        self.render_lock = asyncio.Lock()
         self.temporary = tempfile.TemporaryDirectory(prefix='intellicage-')
         self.workspace = Path(self.temporary.name)
         self.token = uuid4().hex
@@ -115,7 +125,7 @@ class Explorer:
             return Project(cfg)
         project = await self.task(load, status='reading exports and calculating tables…')
         if project:
-            self.install(project)
+            await self.install(project)
 
     def build(self):
         ui.colors(primary='#2a78d6', secondary='#eb6834', accent='#2a78d6')
@@ -124,7 +134,7 @@ class Explorer:
 h1,h2{letter-spacing:-.025em}.plotly-graph-div{border-radius:12px}.muted{color:#667085;font-size:13px}''')
         with ui.header().classes('bg-white text-primary border-b items-center px-6'):
             ui.button(icon='menu', on_click=lambda: self.drawer.toggle()).props('flat round')
-            ui.label('intelli / cage').classes('text-xl font-bold')
+            ui.label(APP_NAME).classes('text-xl font-bold')
             ui.space()
             self.new_button = ui.button('new project', icon='note_add', on_click=self.new_project).props('flat').mark('new-project')
             self.open_button = ui.button('open project', icon='folder_open', on_click=self.native_project).props('flat').mark('open-project') if self.native else None
@@ -155,7 +165,7 @@ h1,h2{letter-spacing:-.025em}.plotly-graph-div{border-radius:12px}.muted{color:#
             self.show_folders()
             ui.separator().classes('my-4')
             self.filters = ui.column().classes('w-full gap-3')
-        self.heading = ui.label('Explore IntelliCage behaviour').classes('text-3xl font-bold')
+        self.heading = ui.label(APP_NAME).classes('text-3xl font-bold')
         self.summary = ui.label('Load your exports to begin.').classes('muted')
         self.sources = ui.column().classes('w-full gap-2')
         with ui.row().classes('w-full items-end gap-4'):
@@ -178,15 +188,18 @@ h1,h2{letter-spacing:-.025em}.plotly-graph-div{border-radius:12px}.muted{color:#
                 with ui.column().classes('w-full gap-1 border rounded-lg p-2'):
                     with ui.row().classes('w-full items-start no-wrap'):
                         ui.label(ds.path.name).classes('font-medium break-words grow min-w-0')
-                        button = ui.button(icon='close', on_click=lambda path=ds.path: self.remove_folder(path)).props('flat round dense').mark(f'remove-folder-{i}').tooltip('remove folder from project')
+                        button = ui.button(icon='close', on_click=lambda path=ds.path: self.remove_folder(path)).props('flat round dense aria-label="remove folder"').mark(f'remove-folder-{i}').tooltip('remove folder from project')
                         self.folder_remove_buttons.append(button)
                     ui.label(str(ds.path.expanduser().resolve())).classes('muted text-xs break-all w-full')
 
-    def install(self, project):
+    async def install(self, project, *, reset_labels=False):
+        previous_section, previous_graph = self.section.value, self.name
         self.project = project
+        if reset_labels: self.dataset_labels.clear()
+        self.dataset_labels.update({path: copy.deepcopy(ds) for ds in project.cfg['datasets']
+                                    for path in source_paths(ds)})
         self.show_folders()
-        self.name = analysis_name(project.analyses[0]) if project.analyses else None
-        self.heading.set_text(project.cfg.get('run_name', 'IntelliCage analysis'))
+        self.heading.set_text(project.cfg.get('run_name', APP_NAME))
         self.summary.set_text(f'{sum(d.animals.height for d in project.datasets)} mice · {len(project.datasets)} exports · {len(project.analyses)} graphs')
         self.sources.clear()
         with self.sources:
@@ -200,8 +213,13 @@ h1,h2{letter-spacing:-.025em}.plotly-graph-div{border-radius:12px}.muted{color:#
                     ui.label(f'AnimalGate: {gate.filter(~pl.col("paired")).height} single-direction records. Keep all records or use paired records only in settings.').classes('muted')
         self.build_filters()
         sections = list(dict.fromkeys(a.get('section', 'Analysis') for a in project.analyses))
-        self.section.set_options(sections, value=sections[0] if sections else None)
-        self.choose_section()
+        self.updating_choices = True
+        try:
+            self.section.set_options(sections, value=previous_section if previous_section in sections else next(iter(sections), None))
+            self.graph_choices(previous_graph)
+        finally:
+            self.updating_choices = False
+        await self.show_graph()
 
     def build_filters(self):
         p = self.project
@@ -269,22 +287,39 @@ h1,h2{letter-spacing:-.025em}.plotly-graph-div{border-radius:12px}.muted{color:#
             if not ds['group'] or not ds['phase']:
                 ui.notify('Group and phase names are required', type='warning'); return
         project = await self.task(Project, cfg)
-        if project: self.install(project)
+        if project: await self.install(project)
+
+    def graph_choices(self, preferred=None):
+        options = {analysis_name(a): a['title'] for a in self.project.analyses if a.get('section', 'Analysis') == self.section.value}
+        self.name = preferred if preferred in options else next(iter(options), None)
+        self.graph_select.set_options(options, value=self.name)
 
     def choose_section(self):
-        if not self.project: return
-        options = {analysis_name(a): a['title'] for a in self.project.analyses if a.get('section', 'Analysis') == self.section.value}
-        self.graph_select.set_options(options, value=next(iter(options), None))
+        if not self.project or self.updating_choices: return
+        self.updating_choices = True
+        try:
+            self.graph_choices()
+        finally:
+            self.updating_choices = False
+        return self.show_graph()
 
-    async def choose_graph(self):
+    def choose_graph(self):
+        if not self.project or self.updating_choices: return
         self.name = self.graph_select.value
-        await self.show_graph()
+        return self.show_graph()
 
     async def show_graph(self):
-        if not self.project or not self.name or self.busy: return
-        name = self.name
-        result = await self.task(self.project.result, name, status='calculating the selected graph…')
-        if name != self.name: return
+        self.render_version += 1
+        version = self.render_version
+        async with self.render_lock:
+            if version != self.render_version or not self.project or not self.name or self.busy: return
+            project, name = self.project, self.name
+            result = await self.task(project.result, name, status='calculating the selected graph…')
+            # an older calculation must not replace a newer view
+            if version != self.render_version or project is not self.project or name != self.name: return
+            self.draw_graph(project, name, result)
+
+    def draw_graph(self, project, name, result):
         self.graph_area.clear(); self.editor_area.clear(); self.details_area.clear()
         if result is None:
             with self.graph_area: ui.label('No graph for this selection. Choose other mice, groups, or windows.').classes('muted')
@@ -294,8 +329,8 @@ h1,h2{letter-spacing:-.025em}.plotly-graph-div{border-radius:12px}.muted{color:#
                 figure = result['figure'].to_plotly_json()
                 figure['config'] = PLOT_CONFIG
                 plot = ui.plotly(figure).classes('w-full').mark('plot')
-                plot.on('plotly_relayout', lambda e: self.project.edit_layout(name, e.args))
-                plot.on('plotly_restyle', lambda e: self.project.edit_traces(name, e.args))
+                plot.on('plotly_relayout', lambda e: project.edit_layout(name, e.args))
+                plot.on('plotly_restyle', lambda e: project.edit_traces(name, e.args))
                 with ui.row().classes('w-full px-4'):
                     ui.button('HTML', on_click=lambda: self.download_graph('html')).props('flat dense')
                     ui.button('PNG', on_click=lambda: self.download_graph('png')).props('flat dense')
@@ -312,30 +347,30 @@ h1,h2{letter-spacing:-.025em}.plotly-graph-div{border-radius:12px}.muted{color:#
                     ylabel = ui.input('y axis', value=result['figure'].layout.yaxis.title.text or '').classes('grow')
                     legend = ui.switch('show legend', value=result['figure'].layout.showlegend is not False)
                 async def apply_titles():
-                    self.project.edit_layout(name, {'title.text': title.value, 'xaxis.title.text': xlabel.value,
+                    project.edit_layout(name, {'title.text': title.value, 'xaxis.title.text': xlabel.value,
                                                    'yaxis.title.text': ylabel.value, 'showlegend': legend.value})
                     await self.show_graph()
                 ui.button('apply titles', on_click=apply_titles).props('flat').mark('apply-titles')
                 with ui.row().classes('w-full'):
-                    for group in self.project.selection['groups']:
+                    for group in project.selection['groups']:
                         trace = next((t for t in result['figure'].data if isinstance(t.meta, dict) and t.meta.get('group') == group), None)
                         if trace is None: continue
                         with ui.column():
                             label = ui.input(f'legend · {group}', value=(trace.name or group).removesuffix(f' · {trace.meta.get("period")}') if trace.meta.get('period') else trace.name or group)
-                            color = ui.color_input(f'color · {group}', value=colors_for(self.project.groups, self.project.cfg.get('colors'))[group])
+                            color = ui.color_input(f'color · {group}', value=colors_for(project.groups, project.cfg.get('colors'))[group])
                             async def apply_group(group=group, label=label, color=color):
-                                fig = self.project.result(name)['figure']
+                                fig = project.result(name)['figure']
                                 for i, t in enumerate(fig.data):
                                     if isinstance(t.meta, dict) and t.meta.get('group') == group:
                                         legend_name = f'{label.value} · {t.meta["period"]}' if t.meta.get('period') else label.value
                                         patch = {'marker.color': color.value, 'name': legend_name}
                                         if t.type == 'scatter': patch['line.color'] = color.value
                                         if t.type == 'bar': patch['marker.line.color'] = color.value
-                                        self.project.edit_traces(name, [patch, [i]])
+                                        project.edit_traces(name, [patch, [i]])
                                 await self.show_graph()
                             ui.button('apply', on_click=apply_group).props('flat dense').mark(f'apply-color-{group}')
                 async def reset():
-                    self.project.styles.pop(name, None)
+                    project.styles.pop(name, None)
                     await self.show_graph()
                 ui.button('reset graph edits', on_click=reset).props('flat dense')
         with self.details_area:
@@ -357,8 +392,8 @@ h1,h2{letter-spacing:-.025em}.plotly-graph-div{border-radius:12px}.muted{color:#
             def show_tables(event):
                 if not event.value or any(tables_content.descendants()): return
                 with tables_content:
-                    for table_name, table in self.project.tables.items():
-                        selected = select_data(table, {}, self.project.groups, self.project.selection)
+                    for table_name, table in project.tables.items():
+                        selected = select_data(table, {}, project.groups, project.selection)
                         ui.button(f'{table_name} · {selected.height} rows · CSV', on_click=lambda table=selected, table_name=table_name: ui.download.content(table.write_csv(), f'{table_name}.csv')).props('flat dense')
             intermediate.on_value_change(show_tables)
 
@@ -369,7 +404,9 @@ h1,h2{letter-spacing:-.025em}.plotly-graph-div{border-radius:12px}.muted{color:#
         ui.aggrid({'columnDefs': [{'field': c, 'sortable': True, 'filter': True, 'resizable': True} for c in table.columns],
                    'rowData': rows, 'pagination': True, 'paginationPageSize': 10}).classes('w-full h-64')
 
-    def new_project(self):
+    def new_project(self, *, keep_labels=False):
+        self.render_version += 1
+        if not keep_labels: self.dataset_labels.clear()
         self.project = None
         self.show_folders()
         self.name = None
@@ -378,7 +415,7 @@ h1,h2{letter-spacing:-.025em}.plotly-graph-div{border-radius:12px}.muted{color:#
             area.clear()
         self.section.set_options([], value=None)
         self.graph_select.set_options({}, value=None)
-        self.heading.set_text('Explore IntelliCage behaviour')
+        self.heading.set_text(APP_NAME)
         self.summary.set_text('Load your exports to begin.')
 
     async def upload(self, event):
@@ -391,7 +428,7 @@ h1,h2{letter-spacing:-.025em}.plotly-graph-div{border-radius:12px}.muted{color:#
                 unpack(data, destination)
                 return Project({'datasets': discover(destination), 'analyses': 'all'})
             project = await self.task(load, status='reading exports and calculating tables…')
-        if project: self.install(project)
+        if project: await self.install(project, reset_labels=True)
 
     async def load_pending(self):
         if not self.pending_specs:
@@ -402,20 +439,27 @@ h1,h2{letter-spacing:-.025em}.plotly-graph-div{border-radius:12px}.muted{color:#
     async def add_specs(self, specs):
         cfg = self.project.configuration() if self.project else {'analyses': 'all'}
         datasets = cfg.setdefault('datasets', [])
-        seen = {Path(ds['path']).expanduser().resolve() for ds in datasets}
-        added = 0
+        seen = {path for ds in datasets for path in source_paths(ds)}
+        added = []
         for spec in specs:
             path = Path(spec['path']).expanduser().resolve()
             if path in seen: continue
-            datasets.append({**spec, 'path': str(path), 'lot': str(len(datasets) + 1)})
+            labels = self.dataset_labels.get(path)
+            datasets.append({**copy.deepcopy(labels if labels is not None else {**spec, 'lot': str(len(self.dataset_labels) + len(added) + 1)}),
+                             'path': str(path)})
             seen.add(path)
-            added += 1
+            added.append(datasets[-1]['group'])
         if not added:
             ui.notify('These folders are already in the project', type='info')
             return
-        cfg.pop('groups', None); cfg.pop('selection', None)
+        present = {ds['group'] for ds in datasets}
+        order = dict.fromkeys([ds['group'] for ds in self.dataset_labels.values()] + [ds['group'] for ds in datasets])
+        cfg['groups'] = [group for group in order if group in present]
+        if 'selection' in cfg:
+            selected = set(cfg['selection']['groups'] + added)
+            cfg['selection']['groups'] = [group for group in cfg['groups'] if group in selected]
         project = await self.task(Project, cfg, status='reading exports and calculating tables…')
-        if project: self.install(project)
+        if project: await self.install(project)
 
     async def add_folders(self, folders):
         def collect():
@@ -435,7 +479,7 @@ h1,h2{letter-spacing:-.025em}.plotly-graph-div{border-radius:12px}.muted{color:#
         remaining = [ds for ds in self.project.datasets if ds.path.resolve() != path]
         if len(remaining) == len(self.project.datasets): return
         if not remaining:
-            self.new_project()
+            self.new_project(keep_labels=True)
             return
         cfg = self.project.configuration()
         cfg['datasets'] = [ds for ds in cfg['datasets'] if Path(ds['path']).expanduser().resolve() != path]
@@ -449,7 +493,7 @@ h1,h2{letter-spacing:-.025em}.plotly-graph-div{border-radius:12px}.muted{color:#
         cfg['selection']['exclude_mice'] = [m for m in self.project.selection.get('exclude_mice', [])
                                              if (m['group'], m['lot'], m['animal']) in mice]
         project = await self.task(Project, cfg, status='updating the remaining folders…')
-        if project: self.install(project)
+        if project: await self.install(project)
 
     async def native_folder(self):
         if self.busy: return
@@ -468,7 +512,7 @@ h1,h2{letter-spacing:-.025em}.plotly-graph-div{border-radius:12px}.muted{color:#
         def load():
             return Project.open(Path(paths[0]).read_bytes(), destination)
         project = await self.task(load, status='opening project…')
-        if project: self.install(project)
+        if project: await self.install(project, reset_labels=True)
 
     async def save_project(self):
         if not self.project: return
@@ -502,7 +546,7 @@ h1,h2{letter-spacing:-.025em}.plotly-graph-div{border-radius:12px}.muted{color:#
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description='IntelliCage explorer')
+    parser = argparse.ArgumentParser(description=APP_NAME)
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument('--desktop', action='store_true', help=argparse.SUPPRESS)
     mode.add_argument('--browser', action='store_true', help=argparse.SUPPRESS)
@@ -524,5 +568,5 @@ def main(argv=None):
     def index():
         Explorer(config, local=True, native=desktop)
     ui.run(host='127.0.0.1', port=port, native=desktop,
-           title='IntelliCage explorer', window_size=(1440, 960) if desktop else None,
+           title=APP_NAME, window_size=(1440, 960) if desktop else None,
            reload=False, show=not args.no_show, show_welcome_message=False)
