@@ -151,6 +151,8 @@ h1,h2{letter-spacing:-.025em}.plotly-graph-div{border-radius:12px}.muted{color:#
                 ui.button('load folder', on_click=self.load_pending).props('flat').classes('w-full').mark('load-folder')
                 ui.upload(label='ZIP / saved project', auto_upload=True, max_file_size=MAX_UPLOAD,
                           on_upload=self.upload, on_rejected=lambda: ui.notify('File exceeds the upload limit', type='negative')).props('accept=.zip,.icage').classes('w-full')
+            self.folder_list = ui.column().classes('w-full gap-2').mark('selected-folders')
+            self.show_folders()
             ui.separator().classes('my-4')
             self.filters = ui.column().classes('w-full gap-3')
         self.heading = ui.label('Explore IntelliCage behaviour').classes('text-3xl font-bold')
@@ -165,8 +167,20 @@ h1,h2{letter-spacing:-.025em}.plotly-graph-div{border-radius:12px}.muted{color:#
         self.task_controls = [self.new_button, self.save_button, self.export_button, self.section, self.graph_select]
         self.task_controls.extend(button for button in [self.folder_button, self.open_button] if button is not None)
 
+    def show_folders(self):
+        self.folder_list.clear()
+        with self.folder_list:
+            if not self.project:
+                ui.label('no folders added').classes('muted text-sm')
+                return
+            for ds in self.project.datasets:
+                with ui.column().classes('w-full gap-1 border rounded-lg p-2'):
+                    ui.label(ds.path.name).classes('font-medium break-words w-full')
+                    ui.label(str(ds.path.expanduser().resolve())).classes('muted text-xs break-all w-full')
+
     def install(self, project):
         self.project = project
+        self.show_folders()
         self.name = analysis_name(project.analyses[0]) if project.analyses else None
         self.heading.set_text(project.cfg.get('run_name', 'IntelliCage analysis'))
         self.summary.set_text(f'{sum(d.animals.height for d in project.datasets)} mice · {len(project.datasets)} exports · {len(project.analyses)} graphs')
@@ -353,6 +367,7 @@ h1,h2{letter-spacing:-.025em}.plotly-graph-div{border-radius:12px}.muted{color:#
 
     def new_project(self):
         self.project = None
+        self.show_folders()
         self.name = None
         self.pending_specs = None
         for area in (self.filters, self.sources, self.graph_area, self.editor_area, self.details_area):
