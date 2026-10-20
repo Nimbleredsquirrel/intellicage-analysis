@@ -271,7 +271,7 @@ h1,h2{letter-spacing:-.025em}.plotly-graph-div{border-radius:12px}.muted{color:#
                         ui.button('add date range', icon='add', on_click=lambda name=name: self.add_window_range(name)).props('flat dense').mark(f'add-range-{i}')
                 ui.label('Dates include both endpoints and refer to the start of the window. Nights may end the next day. Default hours apply outside date ranges.').classes('muted')
                 self.partial = ui.checkbox('include incomplete first / last windows', value=p.cfg['settings']['include_partial_periods']).mark('partial-windows')
-                self.partial.tooltip('Include windows cut short by the start or end of the recording. Day and night must still form a pair.')
+                ui.label('Include windows cut short by the start or end of the recording. For example, if day is set to 08:00–20:00 but recording starts at 12:00, enabling this option includes that incomplete day in the comparison. Day and night must still form a pair.').classes('muted')
             with ui.expansion('first visits').classes('w-full'):
                 self.latency = ui.number('observation window · minutes', value=p.cfg['settings']['latency_window_min'], min=.1).mark('first-visit-window')
                 ui.label('Leave empty for the full phase. Applies to latency and first visit duration.').classes('muted')
@@ -279,7 +279,7 @@ h1,h2{letter-spacing:-.025em}.plotly-graph-div{border-radius:12px}.muted{color:#
                 self.min_day = ui.number('minimum recorded hours per day', value=p.cfg['settings']['min_day_hours'], min=.1, max=24)
             with ui.expansion('animal gate').classes('w-full') as gate_settings:
                 self.paired = ui.checkbox('only sessions with both in and out records', value=p.cfg['settings']['gate_complete_only'])
-                self.paired.tooltip('Match records by mouse and session start. Exclude sessions missing either direction.')
+                ui.label('This option applies to AnimalGate only. Keep only sessions with records for both directions: In and Out. Records are matched by mouse and session start time. Sessions missing either direction are excluded.').classes('muted')
             gate_settings.set_visibility('gate_sessions' in p.tables)
             with ui.expansion('statistics and appearance').classes('w-full'):
                 self.error = ui.select(['sem', 'sd'], label='error bars', value=p.cfg['settings']['error'])
