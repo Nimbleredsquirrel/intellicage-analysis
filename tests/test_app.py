@@ -1,5 +1,6 @@
 import asyncio
 from pathlib import Path
+from unittest.mock import AsyncMock
 
 import pytest
 from nicegui import ui, app
@@ -112,11 +113,10 @@ async def test_settings_labels_colors_and_native_folder(config, tmp_path, monkey
         assert page.project.result(page.name)['figure'].data[0].name == 'new control'
         with user.client:
             await page.download_graph('html')
-            page.path_input.set_value(str(tmp_path/'missing'))
-            await page.local_folder()
+            await page.add_folders([tmp_path/'missing'])
         assert user.notify.contains('Folder not found')
         # folder picker cancellation is harmless
-        monkeypatch.setattr(app.native,'main_window',SimpleNamespace(create_file_dialog=lambda *_:None, signal_server_shutdown=lambda:None))
+        monkeypatch.setattr(app.native,'main_window',SimpleNamespace(create_file_dialog=AsyncMock(return_value=None), signal_server_shutdown=lambda:None))
         with user.client: await page.native_folder()
         with user.client:
             page.label_inputs[0][0].set_value('renamed')
@@ -168,8 +168,7 @@ async def test_upload_zip_project_and_empty_selection(config,tmp_path):
         assert user.download.http_responses
         with user.client:
             await page.load_pending()
-            page.path_input.set_value(str(source))
-            await page.local_folder()
+            await page.add_folders([source])
         # importing the same path has its own validation message
         assert page.project is not None
         user.find(marker='new-project').click()
@@ -371,3 +370,83 @@ async def test_long_operation_shows_status_and_restores_controls():
         assert not page.busy
         assert all(control.enabled for control in page.task_controls)
         assert page.status.text.startswith('done · ')
+
+
+@pytest.mark.asyncio
+async def test_plus_adds_multiple_folders_and_skips_overlapping_exports(config, monkeypatch, tmp_path):
+    from types import SimpleNamespace
+    import webview
+    pages = []
+    paths = [ds['path'] for ds in config['datasets']]
+    dialog = AsyncMock(return_value=paths)
+    monkeypatch.setattr(app.native, 'main_window', SimpleNamespace(
+        create_file_dialog=dialog, signal_server_shutdown=lambda: None))
+    def root():
+        pages.append(Explorer(None, local=True, native=True))
+    async with user_simulation(root) as user:
+        await user.open('/')
+        page = pages[0]
+        assert not hasattr(page, 'path_input')
+        assert not any(isinstance(e, ui.upload) for e in user.client.content.descendants())
+        assert not any(isinstance(e, ui.expansion) and e.text == 'how the numbers work'
+                       for e in user.client.content.descendants())
+        assert not any(isinstance(e, ui.label) and 'mouse by mouse' in str(e.text)
+                       for e in user.client.content.descendants())
+        user.find(marker='add-folders').click()
+        await wait_loaded(page)
+        dialog.assert_awaited_once_with(webview.FileDialog.FOLDER, allow_multiple=True)
+        assert {ds.path.resolve() for ds in page.project.datasets} == {Path(p).resolve() for p in paths}
+        assert len(page.project.datasets) == 2
+        assert len({ds.lot for ds in page.project.datasets}) == 2
+        before = page.project
+        # a parent and its child must not import the same export twice
+        with user.client:
+            await page.add_folders([Path(paths[0]).parent, paths[0]])
+        assert page.project is before
+        assert user.notify.contains('already in the project')
+        # invalid selections leave the previous project intact
+        with user.client:
+            await page.add_folders([paths[0], tmp_path/'missing'])
+        assert page.project is before
+        assert user.notify.contains('Folder not found')
+        dialog.return_value = None
+        with user.client:
+            await page.native_folder()
+            page.busy = True
+            await page.native_folder()
+            page.busy = False
+        assert dialog.await_count == 2
+        assert page.project is before
+
+
+@pytest.mark.asyncio
+async def test_native_open_project_restores_file_and_handles_cancel(config, tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    import webview
+    original = Project(config)
+    original.set_selection({'groups': ['control'], 'phases': ['phase 1'], 'exclude_mice': []})
+    path = tmp_path/'saved.icage'
+    path.write_bytes(original.save())
+    dialog = AsyncMock(return_value=[str(path)])
+    monkeypatch.setattr(app.native, 'main_window', SimpleNamespace(
+        create_file_dialog=dialog, signal_server_shutdown=lambda: None))
+    pages = []
+    def root():
+        pages.append(Explorer(None, local=True, native=True))
+    async with user_simulation(root) as user:
+        await user.open('/')
+        page = pages[0]
+        user.find(marker='open-project').click()
+        await wait_loaded(page)
+        dialog.assert_awaited_once_with(webview.FileDialog.OPEN, file_types=('IntelliCage project (*.icage)',))
+        assert page.project.selection == original.selection
+        assert page.project.datasets[0].visits.equals(original.datasets[0].visits)
+        before = page.project
+        dialog.return_value = None
+        with user.client:
+            await page.native_project()
+            page.busy = True
+            await page.native_project()
+            page.busy = False
+        assert dialog.await_count == 2
+        assert page.project is before

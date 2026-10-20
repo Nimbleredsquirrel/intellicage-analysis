@@ -125,17 +125,20 @@ h1,h2{letter-spacing:-.025em}.plotly-graph-div{border-radius:12px}.muted{color:#
         with ui.header().classes('bg-white text-primary border-b items-center px-6'):
             ui.button(icon='menu', on_click=lambda: self.drawer.toggle()).props('flat round')
             ui.label('intelli / cage').classes('text-xl font-bold')
-            ui.label('behaviour, mouse by mouse').classes('muted ml-4')
             ui.space()
-            self.new_button = ui.button('new project', icon='add', on_click=self.new_project).props('flat').mark('new-project')
+            self.new_button = ui.button('new project', icon='note_add', on_click=self.new_project).props('flat').mark('new-project')
+            self.open_button = ui.button('open project', icon='folder_open', on_click=self.native_project).props('flat').mark('open-project') if self.native else None
             self.save_button = ui.button('save project', icon='save', on_click=self.save_project).props('flat').mark('save-project')
             self.export_button = ui.button('export all', icon='download', on_click=self.export_all).mark('export-all')
         self.status = ui.label('ready').classes('muted text-sm').mark('operation-status')
         self.progress = ui.linear_progress().props('indeterminate').classes('w-full')
         self.progress.set_visibility(False)
         with ui.left_drawer(value=True).classes('p-5').props('width=300') as self.drawer:
-            ui.label('your data').classes('text-xl font-bold')
-            ui.label('Choose an IntelliCage export folder, ZIP, or saved .icage project.').classes('muted')
+            self.folder_button = None
+            with ui.row().classes('w-full items-center justify-between'):
+                ui.label('your data').classes('text-xl font-bold')
+                if self.native:
+                    self.folder_button = ui.button(icon='add', on_click=self.native_folder).props('outline round').mark('add-folders').tooltip('add folders')
             if not self.native:
                 # relative paths preserve the animal gate subfolder
                 ui.html(f'''<label style="display:block;padding:12px;background:#edf4fc;border-radius:8px;cursor:pointer">
@@ -146,21 +149,10 @@ h1,h2{letter-spacing:-.025em}.plotly-graph-div{border-radius:12px}.muted{color:#
     fetch('/imports/{self.token}',{{method:'POST',body:form}}).then(async r=>{{const v=await r.json();
     status.textContent=r.ok?v.datasets+' exports ready — click load folder':v.detail;}}).catch(e=>status.textContent=e.message);"></label><small id="folder-status-{self.token}"></small>''', sanitize=False)
                 ui.button('load folder', on_click=self.load_pending).props('flat').classes('w-full').mark('load-folder')
-            ui.upload(label='ZIP / saved project', auto_upload=True, max_file_size=MAX_UPLOAD,
-                      on_upload=self.upload, on_rejected=lambda: ui.notify('File exceeds the upload limit', type='negative')).props('accept=.zip,.icage').classes('w-full')
-            if self.local:
-                if self.native:
-                    ui.button('choose local folder', on_click=self.native_folder).props('flat')
-                with ui.expansion('local folder path').classes('w-full'):
-                    self.path_input = ui.input('folder path').classes('w-full')
-                    ui.button('add folder', on_click=self.local_folder).props('flat')
+                ui.upload(label='ZIP / saved project', auto_upload=True, max_file_size=MAX_UPLOAD,
+                          on_upload=self.upload, on_rejected=lambda: ui.notify('File exceeds the upload limit', type='negative')).props('accept=.zip,.icage').classes('w-full')
             ui.separator().classes('my-4')
             self.filters = ui.column().classes('w-full gap-3')
-            with ui.expansion('how the numbers work').classes('w-full'):
-                ui.label('Each dot is one mouse. Bars show group means with SEM or SD. Time and lick durations are in seconds.').classes('muted')
-                ui.label('Rates use recorded observation time. Day/night windows can leave gaps. Events belong to the window where they start. Whole gate sessions belong to their starting hour.').classes('muted')
-                ui.label('Learning uses correct and incorrect nosepokes. Open triangles mark mice without a visit in the latency window; tests include them as censored observations.').classes('muted')
-                ui.label('Hourly curves align to phase start; clock-hour profiles use local export time. Daily learning uses 24-hour blocks from phase start. Day/night cycles use the date a window starts.').classes('muted')
         self.heading = ui.label('Explore IntelliCage behaviour').classes('text-3xl font-bold')
         self.summary = ui.label('Load your exports to begin.').classes('muted')
         self.sources = ui.column().classes('w-full gap-2')
@@ -171,6 +163,7 @@ h1,h2{letter-spacing:-.025em}.plotly-graph-div{border-radius:12px}.muted{color:#
         self.editor_area = ui.column().classes('w-full')
         self.details_area = ui.column().classes('w-full')
         self.task_controls = [self.new_button, self.save_button, self.export_button, self.section, self.graph_select]
+        self.task_controls.extend(button for button in [self.folder_button, self.open_button] if button is not None)
 
     def install(self, project):
         self.project = project
@@ -389,24 +382,52 @@ h1,h2{letter-spacing:-.025em}.plotly-graph-div{border-radius:12px}.muted{color:#
 
     async def add_specs(self, specs):
         cfg = self.project.configuration() if self.project else {'analyses': 'all'}
-        cfg['datasets'] = cfg.get('datasets', []) + specs
+        datasets = cfg.setdefault('datasets', [])
+        seen = {Path(ds['path']).expanduser().resolve() for ds in datasets}
+        added = 0
+        for spec in specs:
+            path = Path(spec['path']).expanduser().resolve()
+            if path in seen: continue
+            datasets.append({**spec, 'path': str(path), 'lot': str(len(datasets) + 1)})
+            seen.add(path)
+            added += 1
+        if not added:
+            ui.notify('These folders are already in the project', type='info')
+            return
         cfg.pop('groups', None); cfg.pop('selection', None)
-        project = await self.task(Project, cfg)
+        project = await self.task(Project, cfg, status='reading exports and calculating tables…')
         if project: self.install(project)
 
-    async def local_folder(self):
-        path = Path(self.path_input.value or '').expanduser()
-        if not path.is_dir():
-            ui.notify('Folder not found', type='warning'); return
-        specs = await self.task(discover, path)
+    async def add_folders(self, folders):
+        def collect():
+            specs = []
+            for folder in folders:
+                path = Path(folder).expanduser().resolve()
+                if not path.is_dir():
+                    raise ValueError(f'Folder not found: {path}')
+                specs.extend(discover(path))
+            return specs
+        specs = await self.task(collect, status='checking selected folders…')
         if specs: await self.add_specs(specs)
 
     async def native_folder(self):
+        if self.busy: return
         import webview
-        folders = await run.io_bound(app.native.main_window.create_file_dialog, webview.FileDialog.FOLDER)
+        folders = await app.native.main_window.create_file_dialog(webview.FileDialog.FOLDER, allow_multiple=True)
         if folders:
-            self.path_input.set_value(folders[0])
-            await self.local_folder()
+            await self.add_folders(folders)
+
+    async def native_project(self):
+        if self.busy: return
+        import webview
+        paths = await app.native.main_window.create_file_dialog(
+            webview.FileDialog.OPEN, file_types=('IntelliCage project (*.icage)',))
+        if not paths: return
+        destination = self.workspace / uuid4().hex
+        def load():
+            return Project.open(Path(paths[0]).read_bytes(), destination)
+        project = await self.task(load, status='opening project…')
+        if project: self.install(project)
 
     async def save_project(self):
         if not self.project: return
