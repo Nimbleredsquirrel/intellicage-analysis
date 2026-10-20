@@ -8,8 +8,8 @@ import polars as pl
 
 from .stats import fmt_p
 
-DEFAULT_COLORS = ['#397d78', '#df8057', '#7f78af', '#b29341', '#bd6588', '#558aad']
-PLOT_CONFIG = {'editable': True, 'scrollZoom': True, 'displaylogo': False,
+DEFAULT_COLORS = ['#2a78d6', '#eb6834', '#00cc96', '#ab63fa', '#ffa15a', '#19d3f3']
+PLOT_CONFIG = {'editable': True, 'scrollZoom': False, 'displaylogo': False,
                'toImageButtonOptions': {'format': 'svg', 'filename': 'intellicage'},
                'edits': {'legendPosition': True, 'legendText': True, 'titleText': True,
                          'axisTitleText': True, 'annotationText': True, 'annotationPosition': True}}
@@ -41,7 +41,7 @@ def _mouse_data(df):
 
 def _finish(fig, title, ylabel, xlabel='', ylim=None):
     fig.update_layout(template='simple_white', title={'text': title, 'x': .02, 'xanchor': 'left'},
-                      font={'family': 'Arial, sans-serif', 'size': 14, 'color': '#263936'}, height=540,
+                      font={'family': 'Arial, sans-serif', 'size': 14, 'color': '#222222'}, height=540,
                       margin={'l': 75, 'r': 30, 't': 85, 'b': 95}, hovermode='closest',
                       legend={'orientation': 'h', 'y': -0.22, 'x': 0},
                       xaxis_title=xlabel, yaxis_title=ylabel, paper_bgcolor='white', plot_bgcolor='white')
@@ -68,7 +68,7 @@ def column_plot(df, value, groups, colors, *, title, ylabel, pairwise=None, styl
         sub = df.filter(pl.col('group') == group, pl.col(value).is_finite())
         values = _values(sub, value)
         mean, e = _mean_error(values, error)
-        err = {'type': 'data', 'array': [e], 'color': '#263936', 'thickness': 1.5, 'width': 9}
+        err = {'type': 'data', 'array': [e], 'color': '#222222', 'thickness': 1.5, 'width': 9}
         if style == 'bar':
             fig.add_bar(x=[i], y=[mean], width=.58, error_y=err, name=group, legendgroup=group,
                         marker={'color': colors[group], 'opacity': .35, 'line': {'color': colors[group], 'width': 2}},
@@ -80,7 +80,7 @@ def column_plot(df, value, groups, colors, *, title, ylabel, pairwise=None, styl
         jitter = np.random.default_rng(i).uniform(-.13, .13, len(values))
         fig.add_scatter(x=(i + jitter).tolist(), y=values.tolist(), mode='markers', name=f'{group} · mice',
                         legendgroup=group, showlegend=False, meta=_meta(group, 'mice'),
-                        marker={'color': colors[group], 'size': 9, 'line': {'color': '#263936', 'width': .8}},
+                        marker={'color': colors[group], 'size': 9, 'line': {'color': '#222222', 'width': .8}},
                         customdata=_mouse_data(sub),
                         hovertemplate='mouse %{customdata[0]} · %{customdata[1]}<br>%{y:.5g}<extra></extra>')
     fig.update_xaxes(tickmode='array', tickvals=list(range(len(groups))), ticktext=groups)
@@ -102,12 +102,12 @@ def grouped_plot(df, value, category, groups, colors, *, title, ylabel, xlabel='
         fig.add_bar(x=labels, y=means, name=group, legendgroup=group, offsetgroup=group,
                     meta=_meta(group, 'mean'), customdata=counts,
                     marker={'color': colors[group], 'opacity': .35, 'line': {'color': colors[group], 'width': 2}},
-                    error_y={'type': 'data', 'array': errors, 'color': '#263936'},
+                    error_y={'type': 'data', 'array': errors, 'color': '#222222'},
                     hovertemplate=f'{group}<br>%{{x}}<br>mean %{{y:.5g}} · n=%{{customdata}}<extra></extra>')
         sub = df.filter(pl.col('group') == group, pl.col(value).is_finite())
         fig.add_scatter(x=[(category_labels or {}).get(c, str(c)) for c in sub[category]], y=sub[value].to_list(),
                         mode='markers', name=f'{group} · mice', showlegend=False, legendgroup=group, offsetgroup=group,
-                        marker={'color': colors[group], 'size': 7, 'line': {'color': '#263936', 'width': .6}},
+                        marker={'color': colors[group], 'size': 7, 'line': {'color': '#222222', 'width': .6}},
                         meta=_meta(group, 'mice'), customdata=_mouse_data(sub),
                         hovertemplate='mouse %{customdata[0]} · %{customdata[1]}<br>%{y:.5g}<extra></extra>')
     if posthoc is not None and posthoc.height and len(groups) == 2:

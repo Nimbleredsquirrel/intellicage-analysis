@@ -79,3 +79,6 @@ def test_colours_cycle_and_allow_overrides():
     colors = P.colors_for(groups, {"1": "#000000"})
     assert colors["1"] == "#000000"
     assert colors["0"] == colors["6"]
+    assert colors["0"] == "#2a78d6"
+    assert P.colors_for(["control", "ko"])["ko"] == "#eb6834"
+    assert P.PLOT_CONFIG["scrollZoom"] is False

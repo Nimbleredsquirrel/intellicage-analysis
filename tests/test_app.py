@@ -13,7 +13,7 @@ from intellicage.catalogue import analysis_name
 
 async def wait_loaded(page):
     for _ in range(100):
-        if not page.busy and page.graph_area.descendants():
+        if not page.busy and any(page.graph_area.descendants()):
             return
         await asyncio.sleep(.05)
     raise AssertionError('Graph did not load')
@@ -307,3 +307,67 @@ async def test_activity_sections_default_windows_and_custom_day_night(config):
         await asyncio.sleep(.3)
         assert len(page.graph_select.options)==6
         assert not page.project.result(page.name)['figure'].layout.shapes
+
+
+@pytest.mark.asyncio
+async def test_table_previews_are_built_only_when_opened(config):
+    pages = []
+    def root():
+        page = Explorer(None, local=True, native=True)
+        pages.append(page)
+        page.install(Project(config))
+    async with user_simulation(root) as user:
+        await user.open('/')
+        page = pages[0]
+        await wait_loaded(page)
+        assert not any(isinstance(e, ui.aggrid) for e in page.details_area.descendants())
+        with user.client:
+            statistics = next(e for e in page.details_area.descendants()
+                              if isinstance(e, ui.expansion) and e.text == 'statistics & graph data')
+            statistics.set_value(True)
+        await asyncio.sleep(.1)
+        count = sum(isinstance(e, ui.aggrid) for e in page.details_area.descendants())
+        assert count > 0
+        with user.client:
+            statistics.set_value(False)
+            statistics.set_value(True)
+            intermediate = next(e for e in page.details_area.descendants()
+                                if isinstance(e, ui.expansion) and e.text == 'all intermediate tables')
+            intermediate.set_value(True)
+        await asyncio.sleep(.1)
+        assert sum(isinstance(e, ui.aggrid) for e in page.details_area.descendants()) == count
+        assert any(isinstance(e, ui.button) and 'mouse_summary' in e.text
+                   for e in intermediate.descendants())
+        with user.client:
+            intermediate.set_value(False)
+            intermediate.set_value(True)
+        await asyncio.sleep(.1)
+        assert sum(isinstance(e, ui.button) for e in intermediate.descendants()) == len(page.project.tables)
+
+
+@pytest.mark.asyncio
+async def test_long_operation_shows_status_and_restores_controls():
+    from threading import Event
+    pages = []
+    release = Event()
+    def root():
+        pages.append(Explorer(None, local=True, native=True))
+    def slow_load():
+        assert release.wait(5)
+        return 'loaded'
+    async with user_simulation(root) as user:
+        await user.open('/')
+        page = pages[0]
+        with user.client:
+            pending = asyncio.create_task(page.task(slow_load, status='reading exports…'))
+            try:
+                await asyncio.sleep(.05)
+                assert page.busy
+                assert page.status.text == 'reading exports…'
+                assert all(not control.enabled for control in page.task_controls)
+            finally:
+                release.set()
+                assert await pending == 'loaded'
+        assert not page.busy
+        assert all(control.enabled for control in page.task_controls)
+        assert page.status.text.startswith('done · ')

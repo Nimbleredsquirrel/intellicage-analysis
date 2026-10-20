@@ -44,6 +44,16 @@ def test_real_browser_edits_filters_and_saves_project(tmp_path, config):
             page.on('pageerror', lambda error: errors.append(str(error)))
             page.goto(f'http://127.0.0.1:{port}')
             page.locator('.js-plotly-plot .main-svg').first.wait_for(timeout=30000)
+            plot = page.locator('.js-plotly-plot').first
+            plot.scroll_into_view_if_needed()
+            axes_before = plot.evaluate('(p) => [p._fullLayout.xaxis.range, p._fullLayout.yaxis.range]')
+            scroll_before = page.evaluate('window.scrollY')
+            plot.hover()
+            page.mouse.wheel(0, 500)
+            page.wait_for_timeout(300)
+            assert plot.evaluate('(p) => [p._fullLayout.xaxis.range, p._fullLayout.yaxis.range]') == axes_before
+            assert page.evaluate('window.scrollY') > scroll_before
+
             page.get_by_text('edit this graph', exact=True).click()
             page.get_by_label('title', exact=True).fill('browser title')
             page.get_by_role('button',name='apply titles',exact=True).click()

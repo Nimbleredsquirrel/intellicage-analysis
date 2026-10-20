@@ -6,6 +6,7 @@ import io
 import zipfile
 import json
 import tempfile
+from time import perf_counter
 from pathlib import Path
 from uuid import uuid4
 
@@ -82,18 +83,27 @@ class Explorer:
         IMPORTS.pop(self.token, None)
         self.temporary.cleanup()
 
-    async def task(self, function, *args):
+    async def task(self, function, *args, status='working…'):
         if self.busy:
             return None
         self.busy = True
+        started = perf_counter()
+        self.status.set_text(status)
+        for control in self.task_controls:
+            control.disable()
         self.progress.set_visibility(True)
         try:
-            return await run.io_bound(function, *args)
+            result = await run.io_bound(function, *args)
+            self.status.set_text(f'done · {perf_counter() - started:.1f} s')
+            return result
         except Exception as exc:
+            self.status.set_text('could not finish · see the error message')
             ui.notify(str(exc), type='negative', close_button=True, timeout=10000)
             return None
         finally:
             self.busy = False
+            for control in self.task_controls:
+                control.enable()
             self.progress.set_visibility(False)
 
     async def initial_load(self):
@@ -103,23 +113,24 @@ class Explorer:
                 path = Path(dataset['path']).expanduser()
                 dataset['path'] = str(path if path.is_absolute() else self.config.parent / path)
             return Project(cfg)
-        project = await self.task(load)
+        project = await self.task(load, status='reading exports and calculating tables…')
         if project:
             self.install(project)
 
     def build(self):
-        ui.colors(primary='#327c73', secondary='#d68a58', accent='#327c73')
-        ui.add_css('''body{background:#f5f5f0;color:#223c37}.q-card{border:1px solid #e2e6de;box-shadow:none;border-radius:14px}
-.nicegui-content{max-width:1500px;margin:auto;padding:28px;width:100%}.q-drawer{background:#fcfcf8}
-h1,h2{letter-spacing:-.025em}.plotly-graph-div{border-radius:12px}.muted{color:#6e7e76;font-size:13px}''')
+        ui.colors(primary='#2a78d6', secondary='#eb6834', accent='#2a78d6')
+        ui.add_css('''body{background:#f6f7f9;color:#222222}.q-card{border:1px solid #e1e4e8;box-shadow:none;border-radius:14px}
+.nicegui-content{max-width:1500px;margin:auto;padding:28px;width:100%}.q-drawer{background:#ffffff}
+h1,h2{letter-spacing:-.025em}.plotly-graph-div{border-radius:12px}.muted{color:#667085;font-size:13px}''')
         with ui.header().classes('bg-white text-primary border-b items-center px-6'):
             ui.button(icon='menu', on_click=lambda: self.drawer.toggle()).props('flat round')
             ui.label('intelli / cage').classes('text-xl font-bold')
             ui.label('behaviour, mouse by mouse').classes('muted ml-4')
             ui.space()
-            ui.button('new project', icon='add', on_click=self.new_project).props('flat').mark('new-project')
-            ui.button('save project', icon='save', on_click=self.save_project).props('flat').mark('save-project')
-            ui.button('export all', icon='download', on_click=self.export_all).mark('export-all')
+            self.new_button = ui.button('new project', icon='add', on_click=self.new_project).props('flat').mark('new-project')
+            self.save_button = ui.button('save project', icon='save', on_click=self.save_project).props('flat').mark('save-project')
+            self.export_button = ui.button('export all', icon='download', on_click=self.export_all).mark('export-all')
+        self.status = ui.label('ready').classes('muted text-sm').mark('operation-status')
         self.progress = ui.linear_progress().props('indeterminate').classes('w-full')
         self.progress.set_visibility(False)
         with ui.left_drawer(value=True).classes('p-5').props('width=300') as self.drawer:
@@ -127,7 +138,7 @@ h1,h2{letter-spacing:-.025em}.plotly-graph-div{border-radius:12px}.muted{color:#
             ui.label('Choose an IntelliCage export folder, ZIP, or saved .icage project.').classes('muted')
             if not self.native:
                 # relative paths preserve the animal gate subfolder
-                ui.html(f'''<label style="display:block;padding:12px;background:#e7efea;border-radius:8px;cursor:pointer">
+                ui.html(f'''<label style="display:block;padding:12px;background:#edf4fc;border-radius:8px;cursor:pointer">
     choose export folder<input style="display:none" type="file" webkitdirectory multiple onchange="
     const status=document.getElementById('folder-status-{self.token}');
     status.textContent='uploading…';const form=new FormData();
@@ -159,6 +170,7 @@ h1,h2{letter-spacing:-.025em}.plotly-graph-div{border-radius:12px}.muted{color:#
         self.graph_area = ui.column().classes('w-full')
         self.editor_area = ui.column().classes('w-full')
         self.details_area = ui.column().classes('w-full')
+        self.task_controls = [self.new_button, self.save_button, self.export_button, self.section, self.graph_select]
 
     def install(self, project):
         self.project = project
@@ -260,7 +272,7 @@ h1,h2{letter-spacing:-.025em}.plotly-graph-div{border-radius:12px}.muted{color:#
     async def show_graph(self):
         if not self.project or not self.name or self.busy: return
         name = self.name
-        result = await self.task(self.project.result, name)
+        result = await self.task(self.project.result, name, status='calculating the selected graph…')
         if name != self.name: return
         self.graph_area.clear(); self.editor_area.clear(); self.details_area.clear()
         if result is None:
@@ -317,16 +329,27 @@ h1,h2{letter-spacing:-.025em}.plotly-graph-div{border-radius:12px}.muted{color:#
                 ui.button('reset graph edits', on_click=reset).props('flat dense')
         with self.details_area:
             for note in result['notes']: ui.label(note).classes('muted')
-            with ui.expansion('statistics & graph data', icon='table_chart').classes('w-full'):
-                for kind, table in result['stats'].items():
-                    ui.label(kind.replace('_', ' ')).classes('font-bold')
-                    self.grid(table)
-                    ui.button('download CSV', on_click=lambda table=table, kind=kind: ui.download.content(table.write_csv(), f'{name}__{kind}.csv')).props('flat dense')
-                self.grid(result['data'])
-            with ui.expansion('all intermediate tables', icon='dataset').classes('w-full'):
-                for table_name, table in self.project.tables.items():
-                    selected = select_data(table, {}, self.project.groups, self.project.selection)
-                    ui.button(f'{table_name} · {selected.height} rows · CSV', on_click=lambda table=selected, table_name=table_name: ui.download.content(table.write_csv(), f'{table_name}.csv')).props('flat dense')
+            # build table previews only when requested
+            with ui.expansion('statistics & graph data', icon='table_chart').classes('w-full').mark('statistics') as statistics:
+                stats_content = ui.column().classes('w-full')
+            def show_statistics(event):
+                if not event.value or any(stats_content.descendants()): return
+                with stats_content:
+                    for kind, table in result['stats'].items():
+                        ui.label(kind.replace('_', ' ')).classes('font-bold')
+                        self.grid(table)
+                        ui.button('download CSV', on_click=lambda table=table, kind=kind: ui.download.content(table.write_csv(), f'{name}__{kind}.csv')).props('flat dense')
+                    self.grid(result['data'])
+            statistics.on_value_change(show_statistics)
+            with ui.expansion('all intermediate tables', icon='dataset').classes('w-full').mark('intermediate-tables') as intermediate:
+                tables_content = ui.column().classes('w-full')
+            def show_tables(event):
+                if not event.value or any(tables_content.descendants()): return
+                with tables_content:
+                    for table_name, table in self.project.tables.items():
+                        selected = select_data(table, {}, self.project.groups, self.project.selection)
+                        ui.button(f'{table_name} · {selected.height} rows · CSV', on_click=lambda table=selected, table_name=table_name: ui.download.content(table.write_csv(), f'{table_name}.csv')).props('flat dense')
+            intermediate.on_value_change(show_tables)
 
     @staticmethod
     def grid(table):
@@ -355,7 +378,7 @@ h1,h2{letter-spacing:-.025em}.plotly-graph-div{border-radius:12px}.muted{color:#
             def load():
                 unpack(data, destination)
                 return Project({'datasets': discover(destination), 'analyses': 'all'})
-            project = await self.task(load)
+            project = await self.task(load, status='reading exports and calculating tables…')
         if project: self.install(project)
 
     async def load_pending(self):
