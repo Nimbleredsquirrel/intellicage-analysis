@@ -38,6 +38,7 @@ pyinstaller = ">=6.22,<7"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["."]
 addopts = "-ra --strict-markers --strict-config --cov --cov-report=term-missing"
 asyncio_mode = "auto"
 markers = [
