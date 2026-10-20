@@ -450,3 +450,82 @@ async def test_native_open_project_restores_file_and_handles_cancel(config, tmp_
             page.busy = False
         assert dialog.await_count == 2
         assert page.project is before
+
+
+@pytest.mark.asyncio
+async def test_remove_folders_updates_results_and_keeps_source_files(config, tmp_path):
+    import hashlib
+    pages = []
+    source = Path(config['datasets'][0]['path'])
+    original = hashlib.sha256((source/'Visit.txt').read_bytes()).hexdigest()
+    def root():
+        page = Explorer(None, local=True, native=True)
+        pages.append(page)
+        page.install(Project(config))
+    async with user_simulation(root) as user:
+        await user.open('/')
+        page = pages[0]
+        await wait_loaded(page)
+        page.project.set_selection({'groups': ['control'], 'phases': ['phase 1'], 'exclude_mice': [
+            {'group': 'control', 'lot': 'lot 1', 'animal': 1},
+            {'group': 'ko', 'lot': 'lot 2', 'animal': 2}]})
+        user.find(marker='remove-folder-0').click()
+        for _ in range(100):
+            if len(page.project.datasets) == 1 and not page.busy: break
+            await asyncio.sleep(.05)
+        await wait_loaded(page)
+        assert len(page.project.datasets) == 1
+        assert page.project.groups == ['ko']
+        assert page.project.selection['groups'] == ['ko']
+        assert page.project.selection['exclude_mice'] == [{'group': 'ko', 'lot': 'lot 2', 'animal': 2}]
+        result = page.project.result(page.name)
+        assert set(result['data']['group']) == {'ko'}
+        assert 2 not in result['data']['animal']
+        assert result['figure'].data[0].marker.color == '#eb6834'
+        assert hashlib.sha256((source/'Visit.txt').read_bytes()).hexdigest() == original
+        reopened = Project.open(page.project.save(), tmp_path/'saved')
+        assert len(reopened.datasets) == 1 and reopened.groups == ['ko']
+        # stale clicks and clicks during a calculation must not remove anything
+        before = page.project
+        with user.client:
+            await page.remove_folder(source)
+            page.busy = True
+            await page.remove_folder(page.project.datasets[0].path)
+            page.busy = False
+        assert page.project is before
+        last = page.project.datasets[0].path
+        with user.client:
+            await page.remove_folder(last)
+        assert page.project is None
+        assert not any(page.graph_area.descendants())
+        assert not any(page.filters.descendants())
+        assert len(page.folder_remove_buttons) == 0
+        assert (last/'Visit.txt').is_file()
+        assert any(isinstance(e, ui.label) and e.text == 'no folders added'
+                   for e in page.folder_list.descendants())
+        with user.client:
+            await page.remove_folder(last)
+
+
+@pytest.mark.asyncio
+async def test_failed_folder_removal_preserves_current_project(config, monkeypatch):
+    import intellicage.interface as interface
+    pages = []
+    def root():
+        page = Explorer(None, local=True, native=True)
+        pages.append(page)
+        page.install(Project(config))
+    async with user_simulation(root) as user:
+        await user.open('/')
+        page = pages[0]
+        await wait_loaded(page)
+        before = page.project
+        def fail(_):
+            raise ValueError('could not rebuild')
+        monkeypatch.setattr(interface, 'Project', fail)
+        with user.client:
+            await page.remove_folder(page.project.datasets[0].path)
+        assert page.project is before
+        assert len(page.folder_remove_buttons) == 2
+        assert all(button.enabled for button in page.folder_remove_buttons)
+        assert user.notify.contains('could not rebuild')

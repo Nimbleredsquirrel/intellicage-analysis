@@ -89,7 +89,7 @@ class Explorer:
         self.busy = True
         started = perf_counter()
         self.status.set_text(status)
-        for control in self.task_controls:
+        for control in self.task_controls + self.folder_remove_buttons:
             control.disable()
         self.progress.set_visibility(True)
         try:
@@ -102,7 +102,7 @@ class Explorer:
             return None
         finally:
             self.busy = False
-            for control in self.task_controls:
+            for control in self.task_controls + self.folder_remove_buttons:
                 control.enable()
             self.progress.set_visibility(False)
 
@@ -169,13 +169,17 @@ h1,h2{letter-spacing:-.025em}.plotly-graph-div{border-radius:12px}.muted{color:#
 
     def show_folders(self):
         self.folder_list.clear()
+        self.folder_remove_buttons = []
         with self.folder_list:
             if not self.project:
                 ui.label('no folders added').classes('muted text-sm')
                 return
-            for ds in self.project.datasets:
+            for i, ds in enumerate(self.project.datasets):
                 with ui.column().classes('w-full gap-1 border rounded-lg p-2'):
-                    ui.label(ds.path.name).classes('font-medium break-words w-full')
+                    with ui.row().classes('w-full items-start no-wrap'):
+                        ui.label(ds.path.name).classes('font-medium break-words grow min-w-0')
+                        button = ui.button(icon='close', on_click=lambda path=ds.path: self.remove_folder(path)).props('flat round dense').mark(f'remove-folder-{i}').tooltip('remove folder from project')
+                        self.folder_remove_buttons.append(button)
                     ui.label(str(ds.path.expanduser().resolve())).classes('muted text-xs break-all w-full')
 
     def install(self, project):
@@ -424,6 +428,28 @@ h1,h2{letter-spacing:-.025em}.plotly-graph-div{border-radius:12px}.muted{color:#
             return specs
         specs = await self.task(collect, status='checking selected folders…')
         if specs: await self.add_specs(specs)
+
+    async def remove_folder(self, path):
+        if not self.project or self.busy: return
+        path = Path(path).expanduser().resolve()
+        remaining = [ds for ds in self.project.datasets if ds.path.resolve() != path]
+        if len(remaining) == len(self.project.datasets): return
+        if not remaining:
+            self.new_project()
+            return
+        cfg = self.project.configuration()
+        cfg['datasets'] = [ds for ds in cfg['datasets'] if Path(ds['path']).expanduser().resolve() != path]
+        groups = {ds.group for ds in remaining}
+        phases = list(dict.fromkeys(ds.phase for ds in remaining))
+        mice = {(ds.group, ds.lot, animal) for ds in remaining for animal in ds.animals['Animal']}
+        cfg['colors'] = colors_for(self.project.groups, cfg.get('colors'))
+        cfg['groups'] = [g for g in self.project.groups if g in groups]
+        cfg['selection']['groups'] = [g for g in self.project.selection['groups'] if g in groups] or cfg['groups']
+        cfg['selection']['phases'] = [p for p in self.project.selection.get('phases', []) if p in phases] or phases[:1]
+        cfg['selection']['exclude_mice'] = [m for m in self.project.selection.get('exclude_mice', [])
+                                             if (m['group'], m['lot'], m['animal']) in mice]
+        project = await self.task(Project, cfg, status='updating the remaining folders…')
+        if project: self.install(project)
 
     async def native_folder(self):
         if self.busy: return
