@@ -3,7 +3,7 @@ services:
     name: intellicage
     runtime: docker
     branch: draft
-    plan: starter
+    plan: free
     healthCheckPath: /
     envVars:
       - key: PORT
