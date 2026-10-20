@@ -320,7 +320,7 @@ async def test_plot_events_and_csv_buttons(config):
         # exercise each saved graph type through the graph chooser
         for analysis in page.project.analyses:
             with user.client:
-                page.graph_select.set_value(analysis.get('name') or analysis_name(analysis))
+                await page.open_board_graph(analysis.get('name') or analysis_name(analysis))
             await asyncio.sleep(.15)
         assert page.graph_area.descendants()
 
@@ -392,7 +392,7 @@ async def test_activity_sections_default_windows_and_custom_day_night(config):
         await user.open('/');page=pages[0];await wait_loaded(page)
         assert [(start.value,end.value) for _,start,end in page.window_inputs]==[('08:00','20:00'),('20:00','08:00')]
         with user.client:
-            page.section.set_value('Day / night')
+            page.analysis_view.set_value('day / night')
         await asyncio.sleep(.3)
         assert len(page.graph_select.options)==6
         assert len(page.project.result(page.name)['figure'].data)==4
@@ -406,7 +406,7 @@ async def test_activity_sections_default_windows_and_custom_day_night(config):
         assert result['data']['hours'].unique().to_list()==[6.]
         assert len(result['figure'].data)==4
         with user.client:
-            page.section.set_value('Hourly activity')
+            page.analysis_view.set_value('hourly activity')
         await asyncio.sleep(.3)
         assert len(page.graph_select.options)==6
         assert not page.project.result(page.name)['figure'].layout.shapes
@@ -434,18 +434,16 @@ async def test_table_previews_are_built_only_when_opened(config):
         with user.client:
             statistics.set_value(False)
             statistics.set_value(True)
-            intermediate = next(e for e in page.details_area.descendants()
-                                if isinstance(e, ui.expansion) and e.text == 'all intermediate tables')
-            intermediate.set_value(True)
         await asyncio.sleep(.1)
         assert sum(isinstance(e, ui.aggrid) for e in page.details_area.descendants()) == count
-        assert any(isinstance(e, ui.button) and 'mouse_summary' in e.text
-                   for e in intermediate.descendants())
-        with user.client:
-            intermediate.set_value(False)
-            intermediate.set_value(True)
+        assert not any(page.table_content.descendants())
+        with user.client: page.workspace_tabs.set_value('tables')
         await asyncio.sleep(.1)
-        assert sum(isinstance(e, ui.button) for e in intermediate.descendants()) == len(page.project.tables)
+        assert page.table_preview.table.height == page.project.tables['mouse_summary'].height
+        assert any(isinstance(e, ui.aggrid) for e in page.table_content.descendants())
+        assert not any(isinstance(e, ui.expansion) and e.text == 'all intermediate tables'
+                       for e in page.details_area.descendants())
+
 
 
 @pytest.mark.asyncio

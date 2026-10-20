@@ -1,3 +1,4 @@
+import asyncio
 import copy
 from dataclasses import replace
 from datetime import datetime, timedelta
@@ -125,6 +126,7 @@ def test_calendar_edges_are_handled_without_overflow(schedule):
 
 @pytest.mark.asyncio
 async def test_ui_date_rules_apply_remove_and_restore(config, tmp_path):
+    config['analyses'] = 'all'
     pages = []
     async def root():
         page = Explorer(None, local=True, native=True)
@@ -136,11 +138,14 @@ async def test_ui_date_rules_apply_remove_and_restore(config, tmp_path):
         assert any(isinstance(e, ui.label) and e.text == 'day' for e in page.calculations.descendants())
         assert any(isinstance(e, ui.label) and e.text == 'night' for e in page.calculations.descendants())
         assert not any(isinstance(e, ui.label) and e.text == 'calculation settings' for e in page.filters.descendants())
-        assert page.sources.parent_slot is page.calculations.parent_slot
+        assert not page.window_settings.visible
         assert page.sources.id < page.calculations.id < page.section.id
         assert not any(isinstance(e, ui.expansion) and e.text in ('day', 'night', 'calculation settings')
                        for e in page.calculations.descendants())
         before = page.project.tables['activity_periods'].clone()
+        with user.client: page.analysis_view.set_value('day / night')
+        await asyncio.sleep(.1)
+        assert page.window_settings.visible
         graph = page.name
         for index, start, end in [(0, '10:00', '16:00'), (1, '22:00', '04:00')]:
             user.find(marker=f'add-range-{index}').click()
