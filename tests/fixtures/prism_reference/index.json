@@ -1,0 +1,128 @@
+[
+  {
+    "file": "01.csv",
+    "project": "Lot 4 FMR1 vs Lot 5 Contrôle apprentissage associatif.prism",
+    "source_sha256": "3d8f0e28d2dc98932043ebf987310a3bbb044d26df5b86d1c45ddd78f011cbc3",
+    "title": "Apprentissage associatif",
+    "layout": "grouped",
+    "groups": [
+      "Contrôle",
+      "FMR1 KO"
+    ],
+    "replicates": 12,
+    "row_titles": true,
+    "table_id": "09E70E4F-0858-440A-9383-330CF8DB38A2"
+  },
+  {
+    "file": "02.csv",
+    "project": "Phase 3 Lot 4 vs Lot 5 (5).prism",
+    "source_sha256": "0ce126c0a61d5b6ecbbdb720ea5fe689957c303164422f2f37049c2d5ed5c7db",
+    "title": "VIsits duration",
+    "layout": "column",
+    "groups": [
+      "Contrôle",
+      "FMR1 KO"
+    ],
+    "replicates": 1,
+    "row_titles": false,
+    "table_id": "06199107-7D82-4141-97E5-395C86F6547D"
+  },
+  {
+    "file": "03.csv",
+    "project": "Phase 3 Lot 4 vs Lot 5 (5).prism",
+    "source_sha256": "0ce126c0a61d5b6ecbbdb720ea5fe689957c303164422f2f37049c2d5ed5c7db",
+    "title": "Pourcentage de visites dans chaque coins",
+    "layout": "grouped",
+    "groups": [
+      "Contrôle",
+      "FMR1 KO"
+    ],
+    "replicates": 11,
+    "row_titles": true,
+    "table_id": "ECA93A5A-DBD0-4C5B-916D-6DEB6B072CD9"
+  },
+  {
+    "file": "04.csv",
+    "project": "Phase 3 Lot 4 vs Lot 5 (5).prism",
+    "source_sha256": "0ce126c0a61d5b6ecbbdb720ea5fe689957c303164422f2f37049c2d5ed5c7db",
+    "title": "Mean duration lick",
+    "layout": "column",
+    "groups": [
+      "Contrôle",
+      "FMR1 KO"
+    ],
+    "replicates": 1,
+    "row_titles": false,
+    "table_id": "3948FB18-D201-4D13-89A0-1D9154CD9883"
+  },
+  {
+    "file": "05.csv",
+    "project": "Phase 3 Lot 4 vs Lot 5 (5).prism",
+    "source_sha256": "0ce126c0a61d5b6ecbbdb720ea5fe689957c303164422f2f37049c2d5ed5c7db",
+    "title": "Nombre de nosepoke",
+    "layout": "column",
+    "groups": [
+      "Contrôle",
+      "FMR1 KO"
+    ],
+    "replicates": 1,
+    "row_titles": false,
+    "table_id": "DA70827B-B01C-4D6A-8003-9A2BA0A4916F"
+  },
+  {
+    "file": "06.csv",
+    "project": "Phase 3 Lot 4 vs Lot 5 (5).prism",
+    "source_sha256": "0ce126c0a61d5b6ecbbdb720ea5fe689957c303164422f2f37049c2d5ed5c7db",
+    "title": "Moyenne de temps passé dans un coin",
+    "layout": "grouped",
+    "groups": [
+      "Contrôle",
+      "FMR1 KO"
+    ],
+    "replicates": 11,
+    "row_titles": true,
+    "table_id": "2CDD75CA-C602-4A6C-850E-151E7BB52445"
+  },
+  {
+    "file": "07.csv",
+    "project": "Phase 3 Lot 4 vs Lot 5 (5).prism",
+    "source_sha256": "0ce126c0a61d5b6ecbbdb720ea5fe689957c303164422f2f37049c2d5ed5c7db",
+    "title": "Nombre tot de visites",
+    "layout": "column",
+    "groups": [
+      "Contrôle",
+      "FMR1 KO"
+    ],
+    "replicates": 1,
+    "row_titles": false,
+    "table_id": "0C7725F9-2E07-44E1-9470-68A39C9D2F69"
+  },
+  {
+    "file": "08.csv",
+    "project": "Phase 3 Lot 4 vs Lot 5 (5).prism",
+    "source_sha256": "0ce126c0a61d5b6ecbbdb720ea5fe689957c303164422f2f37049c2d5ed5c7db",
+    "title": "Mean visits duration",
+    "layout": "column",
+    "groups": [
+      "Contrôle",
+      "FMR1 KO"
+    ],
+    "replicates": 1,
+    "row_titles": false,
+    "table_id": "1A34E72E-CE51-464A-9CD4-3B1B4DE903FD"
+  },
+  {
+    "file": "09.csv",
+    "project": "Phase 3 Lot 4 vs Lot 5 (5).prism",
+    "source_sha256": "0ce126c0a61d5b6ecbbdb720ea5fe689957c303164422f2f37049c2d5ed5c7db",
+    "title": "Nombre de licks",
+    "layout": "column",
+    "groups": [
+      "Contrôle",
+      "FMR1 KO"
+    ],
+    "replicates": 1,
+    "row_titles": false,
+    "table_id": "2C680136-05EA-414F-9E88-C868698E8BDB"
+  }
+]

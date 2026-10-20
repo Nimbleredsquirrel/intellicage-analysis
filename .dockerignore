@@ -1,0 +1,10 @@
+.git
+.venv
+results
+__pycache__
+.pytest_cache
+htmlcov
+.coverage*
+tests
+*.zip
+*.icage

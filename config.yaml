@@ -1,0 +1,33 @@
+# the original export folders are only read
+run_name: phase 3 analysis
+output_dir: results
+
+datasets:
+  - path: ~/Documents/Phase 3 Lot 5 control
+    group: Contrôle
+    lot: Lot 5
+    phase: Phase 3
+  - path: ~/Documents/Phase 3 Lot 4 FMR1 KO
+    group: FMR1 KO
+    lot: Lot 4
+    phase: Phase 3
+
+groups: [Contrôle, FMR1 KO]
+colors: {Contrôle: '#327c73', FMR1 KO: '#d68a58'}
+settings:
+  light_on: 8
+  light_off: 20
+  # gaps between windows are allowed, overlaps are not
+  period_windows:
+    - {name: day, start: '08:00', end: '20:00'}
+    - {name: night, start: '20:00', end: '08:00'}
+  latency_window_min: null
+  min_day_hours: 12
+  test: welch
+  repeated_test: mixed_anova
+  padjust: sidak
+  error: sem
+  include_partial_periods: false
+  gate_complete_only: false
+
+analyses: all

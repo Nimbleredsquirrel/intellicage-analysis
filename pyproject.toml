@@ -1,0 +1,56 @@
+[project]
+name = "intellicage-analysis"
+version = "0.2.0"
+description = "IntelliCage analysis for desktop and browser"
+requires-python = ">=3.12,<3.15"
+dependencies = [
+    "polars>=2.0,<3",
+    "numpy>=2.5.4,<3",
+    "pyarrow>=26.0,<27",
+    "pandas>=3.0.6,<4",
+    "scipy>=1.18.1,<2",
+    "statsmodels>=0.15,<0.16",
+    "pingouin>=0.7,<0.8",
+    "plotly>=7.1,<8",
+    "pyyaml>=6.0.3,<7",
+    "nicegui>=3.18,<4",
+]
+
+[project.optional-dependencies]
+desktop = ["pywebview>=6.2.1,<7"]
+export = ["kaleido>=1.1,<2"]
+
+[tool.poetry]
+package-mode = false
+requires-poetry = ">=2.2,<3"
+
+[tool.poetry.group.dev.dependencies]
+pytest = ">=9.1.1,<10"
+pytest-cov = ">=7,<8"
+pytest-asyncio = ">=1,<2"
+playwright = ">=1.55,<2"
+
+[tool.poetry.group.build]
+optional = true
+
+[tool.poetry.group.build.dependencies]
+pyinstaller = ">=6.22,<7"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers --strict-config --cov --cov-report=term-missing"
+asyncio_mode = "auto"
+markers = [
+    "real_data: checks against the local IntelliCage exports and Prism expectations",
+    "browser: real browser interaction checks",
+]
+
+[tool.coverage.run]
+branch = true
+source = ["intellicage", "app"]
+relative_files = true
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+fail_under = 95
