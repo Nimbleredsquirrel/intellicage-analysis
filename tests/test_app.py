@@ -21,6 +21,106 @@ async def wait_loaded(page):
 
 
 @pytest.mark.asyncio
+async def test_import_requires_user_labels_and_preserves_original_files(config, tmp_path):
+    import hashlib
+    folder = Path(config['datasets'][0]['path'])
+    (folder / 'intellicage.json').unlink()
+    before = {str(p): hashlib.sha256(p.read_bytes()).hexdigest() for p in folder.rglob('*') if p.is_file()}
+    pages = []
+    async def root(): pages.append(Explorer(None, local=True, native=True))
+    async with user_simulation(root) as user:
+        await user.open('/')
+        page = pages[0]
+        with user.client:
+            await page.add_folders([folder])
+        assert page.project is None
+        assert page.import_dialog.value
+        assert page.import_label_inputs[0][2].value == ''
+        with user.client:
+            await page.confirm_import()
+        assert user.notify.contains('Group and phase names are required')
+        assert page.import_dialog.value
+        with user.client:
+            group, lot, phase = page.import_label_inputs[0]
+            group.set_value(' control ')
+            lot.set_value('lot A')
+            phase.set_value('phase 3')
+            await page.confirm_import()
+        assert not page.import_dialog.value
+        assert page.project.groups == ['control']
+        assert page.project.phases == ['phase 3']
+        restored = Project.open(page.project.save(), tmp_path/'reopened')
+        assert restored.datasets[0].lot == 'lot A'
+        assert restored.phases == ['phase 3']
+        assert before == {str(p): hashlib.sha256(p.read_bytes()).hexdigest() for p in folder.rglob('*') if p.is_file()}
+        with user.client:
+            await page.remove_folder(folder)
+            await page.add_folders([folder])
+        assert page.project.phases == ['phase 3']
+        assert not page.import_dialog.value
+
+
+@pytest.mark.asyncio
+async def test_cancel_import_and_reopen_labels(config):
+    folder = Path(config['datasets'][0]['path'])
+    (folder / 'intellicage.json').unlink()
+    pages = []
+    async def root(): pages.append(Explorer(None, local=True, native=True))
+    async with user_simulation(root) as user:
+        await user.open('/')
+        page = pages[0]
+        with user.client: await page.add_folders([folder])
+        user.find(marker='cancel-import').click()
+        assert page.project is None
+        assert not page.import_dialog.value
+        with user.client: await page.add_folders([folder])
+        assert page.import_dialog.value
+        with user.client: page.new_project()
+        assert not page.import_dialog.value
+
+
+@pytest.mark.asyncio
+async def test_multiple_unlabelled_folders_validate_together_before_install(config):
+    folders = [Path(ds['path']) for ds in config['datasets']]
+    for folder in folders: (folder / 'intellicage.json').unlink()
+    pages = []
+    async def root(): pages.append(Explorer(None, local=True, native=True))
+    async with user_simulation(root) as user:
+        await user.open('/')
+        page = pages[0]
+        with user.client:
+            await page.add_folders(folders)
+            for group, lot, phase in page.import_label_inputs:
+                group.set_value('control')
+                phase.set_value('phase 3')
+            await page.confirm_import()
+        assert page.project is None
+        assert page.import_dialog.value
+        assert user.notify.contains('Each export needs its own')
+        with user.client:
+            page.import_label_inputs[1][1].set_value('second lot')
+            await page.confirm_import()
+        assert len(page.project.datasets) == 2
+        assert page.project.phases == ['phase 3']
+        assert not page.import_dialog.value
+
+
+@pytest.mark.asyncio
+async def test_settings_only_start_has_no_preloaded_experiments(tmp_path):
+    import yaml
+    config = tmp_path/'config.yaml'
+    config.write_text(yaml.safe_dump({'datasets': [], 'settings': {'error': 'sd'}}))
+    pages = []
+    async def root(): pages.append(Explorer(config, local=True, native=True))
+    async with user_simulation(root) as user:
+        await user.open('/')
+        await asyncio.sleep(.3)
+        assert pages[0].project is None
+        assert pages[0].defaults['settings']['error'] == 'sd'
+        assert not user.notify.messages
+
+
+@pytest.mark.asyncio
 async def test_dashboard_filters_edits_and_downloads(config):
     pages = []
     async def root():
@@ -67,7 +167,7 @@ async def test_empty_start_and_folder_import(config):
         token = page.token
         response = await user.http_client.post(f'/imports/{token}', files=[
             ('files', (f'export/{p.name}', p.read_bytes()))
-            for p in Path(config['datasets'][0]['path']).glob('*.txt')])
+            for p in Path(config['datasets'][0]['path']).iterdir() if p.is_file()])
         assert response.status_code == 200, response.text
         with user.client:
             await page.load_pending()
@@ -149,6 +249,7 @@ async def test_upload_zip_project_and_empty_selection(config,tmp_path):
         source=Path(config['datasets'][0]['path'])
         with zipfile.ZipFile(packed,'w') as z:
             for path in source.rglob('*.txt'):z.write(path,f'control/{path.relative_to(source)}')
+            z.write(source/'intellicage.json', 'control/intellicage.json')
         with user.client:
             await page.upload(SimpleNamespace(file=File('export.zip',packed.getvalue())))
         await wait_loaded(page)

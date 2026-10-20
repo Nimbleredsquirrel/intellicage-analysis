@@ -12,6 +12,7 @@ import plotly.graph_objects as go
 import yaml
 
 from . import plots as P
+from .metadata import folder_labels, resolve_labels
 from .catalogue import analysis_name
 from .pipeline import (DEFAULT_SETTINGS, analyses_for, build_tables, load_datasets,
                        render_analysis, run_metadata, validate_settings)
@@ -64,11 +65,11 @@ def discover(root: Path) -> list[dict]:
     if not folders:
         raise ValueError('No IntelliCage Visit.txt files found')
     result = []
-    for i, folder in enumerate(folders):
+    for folder in folders:
         missing = [name for name in ['Animal.txt', 'Nosepoke.txt', 'Sessions.txt'] if not (folder / name).is_file()]
         if missing:
             raise ValueError(f'{folder.name}: missing {", ".join(missing)}')
-        result.append({'path': str(folder), 'group': folder.name, 'lot': str(i + 1), 'phase': 'Phase 1'})
+        result.append({'path': str(folder), **folder_labels(folder)})
     return result
 
 
@@ -111,6 +112,7 @@ class Project:
         self.selection = copy.deepcopy(self.cfg.get('selection') or {})
         self.styles = copy.deepcopy(self.cfg.pop('styles', {}))
         self.cache = {}
+        self.cfg['datasets'] = [resolve_labels(ds) for ds in self.cfg['datasets']]
         self.datasets = load_datasets(self.cfg['datasets'])
         self.rebuild()
 

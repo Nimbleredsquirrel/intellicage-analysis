@@ -103,7 +103,7 @@ def test_zip_traversal_and_symlinks_rejected_before_writing(tmp_path):
 
 
 def test_discover_and_missing_export_files(tmp_path, datasets):
-    assert discover(datasets[0].path)[0]['group'] == datasets[0].path.name
+    assert discover(datasets[0].path)[0]['group'] == datasets[0].group
     with pytest.raises(ValueError,match='No IntelliCage'): discover(tmp_path/'missing')
     (tmp_path/'Visit.txt').write_text('x')
     with pytest.raises(ValueError,match='missing'): discover(tmp_path)

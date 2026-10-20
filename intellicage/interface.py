@@ -17,6 +17,7 @@ import yaml
 import polars as pl
 
 from .catalogue import analysis_name
+from .metadata import METADATA_FILE, group_hint, validate_labels
 from .plots import PLOT_CONFIG, colors_for
 from .project import MAX_FILES, MAX_UPLOAD, Project, discover, safe_name, unpack
 from .prism import analysis_csv
@@ -44,7 +45,7 @@ async def import_folder(token: str, request: Request):
                 if name in seen:
                     raise ValueError('Duplicate file paths')
                 seen.add(name)
-                if not name.lower().endswith('.txt'):
+                if not name.lower().endswith('.txt') and Path(name).name != METADATA_FILE:
                     continue
                 count += 1
                 if count > MAX_FILES:
@@ -77,6 +78,8 @@ class Explorer:
         self.name = None
         self.busy = False
         self.dataset_labels = {}
+        self.import_dialog = None
+        self.defaults = {}
         self.updating_choices = False
         self.render_version = 0
         self.render_lock = asyncio.Lock()
@@ -119,6 +122,9 @@ class Explorer:
     async def initial_load(self):
         def load():
             cfg = yaml.safe_load(self.config.read_text())
+            self.defaults = {key: value for key, value in cfg.items() if key in ('settings', 'analyses', 'output_dir')}
+            if not cfg.get('datasets'):
+                return None
             for dataset in cfg['datasets']:
                 path = Path(dataset['path']).expanduser()
                 dataset['path'] = str(path if path.is_absolute() else self.config.parent / path)
@@ -155,7 +161,7 @@ h1,h2{letter-spacing:-.025em}.plotly-graph-div{border-radius:12px}.muted{color:#
     choose export folder<input style="display:none" type="file" webkitdirectory multiple onchange="
     const status=document.getElementById('folder-status-{self.token}');
     status.textContent='uploading…';const form=new FormData();
-    for(const f of this.files){{if(f.name.toLowerCase().endsWith('.txt'))form.append('files',f,f.webkitRelativePath);}}
+    for(const f of this.files){{if(f.name.toLowerCase().endsWith('.txt')||f.name==='intellicage.json')form.append('files',f,f.webkitRelativePath);}}
     fetch('/imports/{self.token}',{{method:'POST',body:form}}).then(async r=>{{const v=await r.json();
     status.textContent=r.ok?v.datasets+' exports ready — click load folder':v.detail;}}).catch(e=>status.textContent=e.message);"></label><small id="folder-status-{self.token}"></small>''', sanitize=False)
                 ui.button('load folder', on_click=self.load_pending).props('flat').classes('w-full').mark('load-folder')
@@ -406,6 +412,8 @@ h1,h2{letter-spacing:-.025em}.plotly-graph-div{border-radius:12px}.muted{color:#
 
     def new_project(self, *, keep_labels=False):
         self.render_version += 1
+        if self.import_dialog:
+            self.import_dialog.close()
         if not keep_labels: self.dataset_labels.clear()
         self.project = None
         self.show_folders()
@@ -424,10 +432,12 @@ h1,h2{letter-spacing:-.025em}.plotly-graph-div{border-radius:12px}.muted{color:#
         if event.file.name.lower().endswith('.icage'):
             project = await self.task(Project.open, data, destination)
         else:
-            def load():
+            def extract():
                 unpack(data, destination)
-                return Project({'datasets': discover(destination), 'analyses': 'all'})
-            project = await self.task(load, status='reading exports and calculating tables…')
+                return discover(destination)
+            specs = await self.task(extract, status='checking exports…')
+            if specs: await self.add_specs(specs)
+            return
         if project: await self.install(project, reset_labels=True)
 
     async def load_pending(self):
@@ -437,21 +447,25 @@ h1,h2{letter-spacing:-.025em}.plotly-graph-div{border-radius:12px}.muted{color:#
         self.pending_specs = None
 
     async def add_specs(self, specs):
-        cfg = self.project.configuration() if self.project else {'analyses': 'all'}
+        cfg = self.project.configuration() if self.project else {'analyses': 'all', **copy.deepcopy(self.defaults)}
         datasets = cfg.setdefault('datasets', [])
         seen = {path for ds in datasets for path in source_paths(ds)}
-        added = []
+        incoming = []
         for spec in specs:
             path = Path(spec['path']).expanduser().resolve()
             if path in seen: continue
             labels = self.dataset_labels.get(path)
-            datasets.append({**copy.deepcopy(labels if labels is not None else {**spec, 'lot': str(len(self.dataset_labels) + len(added) + 1)}),
-                             'path': str(path)})
+            incoming.append({**copy.deepcopy(labels if labels is not None else spec), 'path': str(path)})
             seen.add(path)
-            added.append(datasets[-1]['group'])
-        if not added:
+        if not incoming:
             ui.notify('These folders are already in the project', type='info')
             return
+        if any(not ds.get('group') or not ds.get('phase') for ds in incoming):
+            hints = await self.task(lambda: [group_hint(Path(ds['path'])) for ds in incoming], status='reading dataset labels…')
+            if hints is not None: self.ask_labels(incoming, hints)
+            return
+        datasets.extend(incoming)
+        added = [ds['group'] for ds in incoming]
         present = {ds['group'] for ds in datasets}
         order = dict.fromkeys([ds['group'] for ds in self.dataset_labels.values()] + [ds['group'] for ds in datasets])
         cfg['groups'] = [group for group in order if group in present]
@@ -459,7 +473,43 @@ h1,h2{letter-spacing:-.025em}.plotly-graph-div{border-radius:12px}.muted{color:#
             selected = set(cfg['selection']['groups'] + added)
             cfg['selection']['groups'] = [group for group in cfg['groups'] if group in selected]
         project = await self.task(Project, cfg, status='reading exports and calculating tables…')
-        if project: await self.install(project)
+        if project:
+            await self.install(project)
+            return True
+
+    def ask_labels(self, specs, hints):
+        if self.import_dialog: self.import_dialog.close()
+        self.import_specs = specs
+        self.import_label_inputs = []
+        with ui.dialog().props('persistent') as self.import_dialog, ui.card().classes('w-[760px] max-w-full max-h-[85vh] overflow-y-auto'):
+            ui.label('dataset labels').classes('text-xl font-bold')
+            ui.label('Set the experimental group and phase. These labels are saved with your project.').classes('muted')
+            for i, (ds, hint) in enumerate(zip(specs, hints)):
+                ui.label(Path(ds['path']).name).classes('font-medium')
+                ui.label(ds['path']).classes('muted break-all')
+                if hint: ui.label(f'Group in Animal.txt: {hint} · confirm its experimental meaning.').classes('muted')
+                with ui.row().classes('w-full'):
+                    group = ui.input('group', value=ds.get('group') or hint).mark(f'import-group-{i}')
+                    lot = ui.input('lot', value=ds.get('lot', '')).mark(f'import-lot-{i}')
+                    phase = ui.input('phase', value=ds.get('phase', '')).mark(f'import-phase-{i}')
+                self.import_label_inputs.append((group, lot, phase))
+            with ui.row():
+                ui.button('cancel', on_click=self.import_dialog.close).props('flat').mark('cancel-import')
+                ui.button('add folders', on_click=self.confirm_import).mark('confirm-import')
+        self.import_dialog.open()
+
+    async def confirm_import(self):
+        if self.busy: return
+        specs = copy.deepcopy(self.import_specs)
+        for spec, inputs in zip(specs, self.import_label_inputs):
+            spec.update(zip(('group', 'lot', 'phase'), (field.value.strip() for field in inputs)))
+            try:
+                validate_labels(spec)
+            except ValueError as exc:
+                ui.notify(str(exc), type='warning')
+                return
+        if await self.add_specs(specs):
+            self.import_dialog.close()
 
     async def add_folders(self, folders):
         def collect():

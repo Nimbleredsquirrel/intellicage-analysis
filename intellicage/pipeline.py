@@ -17,6 +17,7 @@ import yaml
 from . import metrics as M, plots as P, stats as S
 from .catalogue import analysis_name, default_analyses
 from .io import Dataset, load_dataset
+from .metadata import resolve_labels, validate_labels
 from .selection import present_groups, select_data
 from .timebins import period_windows
 
@@ -41,7 +42,7 @@ def _slug(text):
 def load_config(path: Path) -> dict:
     cfg = yaml.safe_load(path.read_text(encoding='utf8'))
     if not isinstance(cfg, dict) or not cfg.get('datasets'):
-        raise ValueError('Configuration needs at least one dataset')
+        raise ValueError('Analysis needs at least one dataset; add folders in the app and save a project, or supply dataset paths for batch analysis')
     cfg['settings'] = {**DEFAULT_SETTINGS, **(cfg.get('settings') or {})}
     validate_settings(cfg['settings'])
     return cfg
@@ -64,7 +65,9 @@ def validate_settings(settings):
 
 def load_datasets(datasets: list[dict]) -> list[Dataset]:
     keys, paths, result = set(), set(), []
-    for d in datasets:
+    for spec in datasets:
+        d = resolve_labels(spec)
+        validate_labels(d)
         path = Path(d['path']).expanduser().resolve()
         key = (d['group'], str(d.get('lot', '')), str(d.get('phase', '')))
         if key in keys or path in paths:
@@ -289,9 +292,9 @@ iframe{{width:100%;height:620px;border:0}}h2{{font-size:20px}}a{{color:#397d78}}
     (out / 'report.html').write_text(page, encoding='utf8')
 
 
-def run(config_path: str | Path, only: list[str] | None = None) -> Path:
+def run(config_path: str | Path, only: list[str] | None = None, *, configuration: dict | None = None) -> Path:
     config_path = Path(config_path).resolve()
-    cfg = load_config(config_path)
+    cfg = configuration if configuration is not None else load_config(config_path)
     for d in cfg['datasets']:
         path = Path(d['path']).expanduser()
         d['path'] = str((config_path.parent / path).resolve() if not path.is_absolute() else path.resolve())
@@ -349,7 +352,7 @@ def run(config_path: str | Path, only: list[str] | None = None) -> Path:
     return out
 
 
-def describe(config_path):
-    cfg = load_config(Path(config_path))
+def describe(config_path, *, configuration=None):
+    cfg = configuration if configuration is not None else load_config(Path(config_path))
     for name, table in build_tables(load_datasets(cfg['datasets']), cfg['settings']).items():
         print(f'{name}:\n    ' + '\n    '.join(c for c in table.columns if c not in M.IDS))

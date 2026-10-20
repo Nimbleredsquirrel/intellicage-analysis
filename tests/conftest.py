@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+import json
 
 import polars as pl
 import pytest
@@ -14,6 +15,7 @@ def export_factory(tmp_path):
     def make(group="control", lot="lot 1", phase="phase 1", *, learning=True, gate=True, extra=0):
         path = tmp_path / f"{group}-{lot}-{phase}"
         path.mkdir(parents=True)
+        (path / 'intellicage.json').write_text(json.dumps({'group': group, 'lot': lot, 'phase': phase}))
         start = datetime(2026, 1, 1, 7, 30)
         end = start + timedelta(hours=48)
         pl.DataFrame({"Session": [1], "SessionStart": [str(start)], "SessionEnd": [str(end)]}).write_csv(
