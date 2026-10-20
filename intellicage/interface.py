@@ -253,26 +253,62 @@ h1,h2{letter-spacing:-.025em}.plotly-graph-div{border-radius:12px}.muted{color:#
                 ui.button('clear all', on_click=lambda: self.set_mice(False)).props('flat dense').mark('clear-all-mice')
             self.mice_area = ui.column().classes('w-full gap-1').mark('mice')
             self.show_mice()
+            self.window_inputs, self.window_ranges, self.range_areas = [], {}, {}
             with ui.expansion('calculation settings').classes('w-full'):
+                ui.label(f'recorded dates: {min(ds.start.date() for ds in p.datasets)} — {max(ds.end.date() for ds in p.datasets)}').classes('muted')
                 windows = period_windows(p.cfg['settings'])
-                self.window_inputs = []
-                for w in windows:
-                    name = ui.input('window name', value=w['name']).classes('w-full')
-                    start = ui.input('from · HH:MM', value=f'{w["start"] // 60:02}:{w["start"] % 60:02}').classes('w-full')
-                    end = ui.input('until · HH:MM', value=f'{w["end"] // 60:02}:{w["end"] % 60:02}').classes('w-full')
-                    self.window_inputs.append((name, start, end))
-                ui.label('Day is paired with the night starting on the same date. Default windows: 08:00–20:00 / 20:00–08:00.').classes('muted')
-                self.partial = ui.switch('include partial windows', value=p.cfg['settings']['include_partial_periods'])
-                self.paired = ui.switch('paired gate records only', value=p.cfg['settings']['gate_complete_only'])
-                self.latency = ui.number('first visit observation window · minutes', value=p.cfg['settings']['latency_window_min'], min=.1).mark('first-visit-window')
+                for i, w in enumerate(windows):
+                    name = w['name']
+                    label = {'Light': 'day', 'Dark': 'night'}.get(name, name)
+                    with ui.expansion(label, value=True).classes('w-full').mark(f'window-{i}'):
+                        ui.label('default hours').classes('muted')
+                        start = ui.input('from', value=self.clock_text(w['start'])).props('type=time').classes('w-full')
+                        end = ui.input('until', value=self.clock_text(w['end'])).props('type=time').classes('w-full')
+                        self.window_inputs.append((name, start, end))
+                        self.window_ranges[name] = []
+                        self.range_areas[name] = ui.column().classes('w-full gap-2')
+                        for rule in w.get('ranges', []): self.add_window_range(name, rule)
+                        ui.button('add date range', icon='add', on_click=lambda name=name: self.add_window_range(name)).props('flat dense').mark(f'add-range-{i}')
+                ui.label('Dates include both endpoints and refer to the start of the window. Nights may end the next day. Default hours apply outside date ranges.').classes('muted')
+                self.partial = ui.checkbox('include incomplete first / last windows', value=p.cfg['settings']['include_partial_periods']).mark('partial-windows')
+                self.partial.tooltip('Include windows cut short by the start or end of the recording. Day and night must still form a pair.')
+            with ui.expansion('first visits').classes('w-full'):
+                self.latency = ui.number('observation window · minutes', value=p.cfg['settings']['latency_window_min'], min=.1).mark('first-visit-window')
                 ui.label('Leave empty for the full phase. Applies to latency and first visit duration.').classes('muted')
-                self.min_day = ui.number('minimum learning day · hours', value=p.cfg['settings']['min_day_hours'], min=.1, max=24)
+            with ui.expansion('learning').classes('w-full'):
+                self.min_day = ui.number('minimum recorded hours per day', value=p.cfg['settings']['min_day_hours'], min=.1, max=24)
+            with ui.expansion('animal gate').classes('w-full') as gate_settings:
+                self.paired = ui.checkbox('only sessions with both in and out records', value=p.cfg['settings']['gate_complete_only'])
+                self.paired.tooltip('Match records by mouse and session start. Exclude sessions missing either direction.')
+            gate_settings.set_visibility('gate_sessions' in p.tables)
+            with ui.expansion('statistics and appearance').classes('w-full'):
                 self.error = ui.select(['sem', 'sd'], label='error bars', value=p.cfg['settings']['error'])
                 self.bar_style = ui.select(['bar', 'scatter'], label='summary style', value=p.cfg['settings']['bar_style'])
                 self.test = ui.select(['welch', 'student', 'mann_whitney', 'auto'], label='group test', value=p.cfg['settings']['test'])
                 self.repeated = ui.select(['mixed_anova', 'lmm'], label='repeated measures', value=p.cfg['settings']['repeated_test'])
                 self.adjust = ui.select(['sidak', 'holm', 'bonferroni', 'fdr_bh'], label='multiple comparisons', value=p.cfg['settings']['padjust'])
-                ui.button('recalculate', on_click=self.recalculate).classes('w-full').mark('recalculate')
+            ui.button('apply settings', on_click=self.recalculate).classes('w-full').mark('recalculate')
+
+    @staticmethod
+    def clock_text(minutes):
+        return f'{minutes // 60:02}:{minutes % 60:02}'
+
+    def add_window_range(self, name, rule=None):
+        rule = rule or {}
+        with self.range_areas[name]:
+            with ui.column().classes('w-full border rounded-lg p-2 gap-2') as container:
+                row = {'container': container}
+                row['date_from'] = ui.input('from date', value=rule.get('date_from', '')).props('type=date').classes('w-full')
+                row['date_to'] = ui.input('through date', value=rule.get('date_to', '')).props('type=date').classes('w-full')
+                start, end = next((s, e) for n, s, e in self.window_inputs if n == name)
+                row['start'] = ui.input('from', value=self.clock_text(rule['start']) if rule else start.value).props('type=time').classes('w-full')
+                row['end'] = ui.input('until', value=self.clock_text(rule['end']) if rule else end.value).props('type=time').classes('w-full')
+                ui.button('remove range', icon='close', on_click=lambda: self.remove_window_range(name, row)).props('flat dense')
+        self.window_ranges[name].append(row)
+
+    def remove_window_range(self, name, row):
+        self.window_ranges[name].remove(row)
+        row['container'].delete()
 
     def show_mice(self):
         p = self.project
@@ -327,7 +363,9 @@ h1,h2{letter-spacing:-.025em}.plotly-graph-div{border-radius:12px}.muted{color:#
         return self.show_graph()
 
     async def recalculate(self):
-        settings = {'period_windows': [{'name': n.value, 'start': s.value, 'end': e.value} for n, s, e in self.window_inputs],
+        settings = {'period_windows': [{'name': n, 'start': s.value, 'end': e.value,
+                     'ranges': [{key: row[key].value for key in ('date_from', 'date_to', 'start', 'end')}
+                                for row in self.window_ranges[n]]} for n, s, e in self.window_inputs],
                     'include_partial_periods': self.partial.value, 'gate_complete_only': self.paired.value,
                     'latency_window_min': self.latency.value, 'min_day_hours': self.min_day.value,
                     'error': self.error.value, 'bar_style': self.bar_style.value, 'test': self.test.value, 'repeated_test': self.repeated.value, 'padjust': self.adjust.value}
