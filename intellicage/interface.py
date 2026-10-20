@@ -80,6 +80,8 @@ class Explorer:
         self.dataset_labels = {}
         self.import_dialog = None
         self.defaults = {}
+        self.updating_selection = False
+        self.metadata_dialog = None
         self.updating_choices = False
         self.render_version = 0
         self.render_lock = asyncio.Lock()
@@ -102,7 +104,7 @@ class Explorer:
         self.busy = True
         started = perf_counter()
         self.status.set_text(status)
-        for control in self.task_controls + self.folder_remove_buttons:
+        for control in self.task_controls + self.folder_remove_buttons + self.folder_edit_buttons:
             control.disable()
         self.progress.set_visibility(True)
         try:
@@ -115,7 +117,7 @@ class Explorer:
             return None
         finally:
             self.busy = False
-            for control in self.task_controls + self.folder_remove_buttons:
+            for control in self.task_controls + self.folder_remove_buttons + self.folder_edit_buttons:
                 control.enable()
             self.progress.set_visibility(False)
 
@@ -186,6 +188,7 @@ h1,h2{letter-spacing:-.025em}.plotly-graph-div{border-radius:12px}.muted{color:#
     def show_folders(self):
         self.folder_list.clear()
         self.folder_remove_buttons = []
+        self.folder_edit_buttons = []
         with self.folder_list:
             if not self.project:
                 ui.label('no folders added').classes('muted text-sm')
@@ -197,6 +200,9 @@ h1,h2{letter-spacing:-.025em}.plotly-graph-div{border-radius:12px}.muted{color:#
                         button = ui.button(icon='close', on_click=lambda path=ds.path: self.remove_folder(path)).props('flat round dense aria-label="remove folder"').mark(f'remove-folder-{i}').tooltip('remove folder from project')
                         self.folder_remove_buttons.append(button)
                     ui.label(str(ds.path.expanduser().resolve())).classes('muted text-xs break-all w-full')
+                    ui.label(' · '.join(filter(None, (ds.group, ds.lot, ds.phase)))).classes('muted text-sm')
+                    edit = ui.button('edit labels', icon='edit', on_click=lambda i=i: self.edit_labels(i)).props('flat dense').mark(f'edit-labels-{i}')
+                    self.folder_edit_buttons.append(edit)
 
     async def install(self, project, *, reset_labels=False):
         previous_section, previous_graph = self.section.value, self.name
@@ -232,14 +238,21 @@ h1,h2{letter-spacing:-.025em}.plotly-graph-div{border-radius:12px}.muted{color:#
         self.filters.clear()
         with self.filters:
             ui.label('selection').classes('text-lg font-bold')
-            self.group_select = ui.select(p.groups, value=p.selection['groups'], multiple=True, label='groups').classes('w-full').mark('groups')
-            self.phase_select = ui.select(p.phases, value=p.selection['phases'][0] if p.selection['phases'] else None, label='phase').classes('w-full')
-            mice = p.tables['mouse_summary'].select('group', 'lot', 'animal').unique().sort('group', 'lot', 'animal').to_dicts()
-            self.mouse_keys = mice
-            excluded = p.selection.get('exclude_mice', [])
-            self.mouse_select = ui.select({i: f'{m["animal"]} · {m["group"]} · {m["lot"]}' for i, m in enumerate(mice)},
-                value=[i for i, m in enumerate(mice) if m in excluded], multiple=True, with_input=True, label='exclude mice').classes('w-full').mark('exclude-mice')
-            ui.button('apply selection', on_click=self.apply_selection).classes('w-full').mark('apply-selection')
+            ui.label('groups').classes('font-medium')
+            self.group_checkboxes = {}
+            for i, group in enumerate(p.groups):
+                box = ui.checkbox(group, value=group in p.selection['groups']).mark(f'group-{i}')
+                self.group_checkboxes[group] = box
+                box.on_value_change(self.choose_selection)
+            ui.label('phase').classes('font-medium')
+            self.phase_select = ui.radio(p.phases, value=next(iter(p.selection['phases']), None)).mark('phase')
+            self.phase_select.on_value_change(self.choose_selection)
+            ui.label('mice').classes('font-medium')
+            with ui.row().classes('gap-1'):
+                ui.button('select all', on_click=lambda: self.set_mice(True)).props('flat dense').mark('select-all-mice')
+                ui.button('clear all', on_click=lambda: self.set_mice(False)).props('flat dense').mark('clear-all-mice')
+            self.mice_area = ui.column().classes('w-full gap-1').mark('mice')
+            self.show_mice()
             with ui.expansion('calculation settings').classes('w-full'):
                 windows = period_windows(p.cfg['settings'])
                 self.window_inputs = []
@@ -260,19 +273,58 @@ h1,h2{letter-spacing:-.025em}.plotly-graph-div{border-radius:12px}.muted{color:#
                 self.repeated = ui.select(['mixed_anova', 'lmm'], label='repeated measures', value=p.cfg['settings']['repeated_test'])
                 self.adjust = ui.select(['sidak', 'holm', 'bonferroni', 'fdr_bh'], label='multiple comparisons', value=p.cfg['settings']['padjust'])
                 ui.button('recalculate', on_click=self.recalculate).classes('w-full').mark('recalculate')
-            with ui.expansion('dataset labels').classes('w-full'):
-                self.label_inputs = []
-                for ds in p.cfg['datasets']:
-                    ui.label(Path(ds['path']).name).classes('muted')
-                    self.label_inputs.append((ui.input('group', value=ds['group']), ui.input('lot', value=ds.get('lot', '')), ui.input('phase', value=ds.get('phase', ''))))
-                ui.button('apply labels', on_click=self.relabel).props('flat')
 
-    async def apply_selection(self):
-        if not self.group_select.value or not self.phase_select.value:
-            ui.notify('Select a group and a phase', type='warning'); return
-        self.project.set_selection({'groups': self.group_select.value, 'phases': [self.phase_select.value],
-                                   'exclude_mice': [self.mouse_keys[i] for i in self.mouse_select.value]})
-        await self.show_graph()
+    def show_mice(self):
+        p = self.project
+        self.mice_area.clear()
+        self.mouse_checkboxes = {}
+        mice = (p.tables['mouse_summary'].filter(pl.col('group').is_in(p.selection['groups']),
+                    pl.col('phase').is_in(p.selection['phases']))
+                .select('group', 'lot', 'animal').unique().sort('group', 'lot', 'animal').to_dicts())
+        with self.mice_area:
+            previous = None
+            for mouse in mice:
+                key = (mouse['group'], mouse['lot'], mouse['animal'])
+                if key[:2] != previous:
+                    ui.label(' · '.join(filter(None, key[:2]))).classes('muted font-medium mt-2')
+                    previous = key[:2]
+                box = ui.checkbox(str(mouse['animal']), value=mouse not in p.selection.get('exclude_mice', [])).mark(f'mouse-{len(self.mouse_checkboxes)}')
+                self.mouse_checkboxes[key] = box
+                box.on_value_change(lambda e, key=key: self.choose_mouse(key, e.value))
+            if not mice:
+                ui.label('No mice in the selected groups and phase.').classes('muted')
+
+    def choose_selection(self):
+        if self.updating_selection: return
+        selection = {**self.project.selection,
+                     'groups': [group for group, box in self.group_checkboxes.items() if box.value],
+                     'phases': [self.phase_select.value] if self.phase_select.value else []}
+        self.project.set_selection(selection)
+        self.show_mice()
+        self.render_version += 1
+        return self.show_graph()
+
+    def choose_mouse(self, key, included):
+        if self.updating_selection: return
+        mouse = dict(zip(('group', 'lot', 'animal'), key))
+        excluded = [m for m in self.project.selection.get('exclude_mice', []) if m != mouse]
+        if not included: excluded.append(mouse)
+        self.project.set_selection({**self.project.selection, 'exclude_mice': excluded})
+        self.render_version += 1
+        return self.show_graph()
+
+    def set_mice(self, included):
+        self.updating_selection = True
+        try:
+            for box in self.mouse_checkboxes.values(): box.set_value(included)
+        finally:
+            self.updating_selection = False
+        visible = [dict(zip(('group', 'lot', 'animal'), key)) for key in self.mouse_checkboxes]
+        excluded = [m for m in self.project.selection.get('exclude_mice', []) if m not in visible]
+        if not included: excluded.extend(visible)
+        self.project.set_selection({**self.project.selection, 'exclude_mice': excluded})
+        self.render_version += 1
+        return self.show_graph()
 
     async def recalculate(self):
         settings = {'period_windows': [{'name': n.value, 'start': s.value, 'end': e.value} for n, s, e in self.window_inputs],
@@ -285,15 +337,50 @@ h1,h2{letter-spacing:-.025em}.plotly-graph-div{border-radius:12px}.muted{color:#
         if await self.task(rebuild):
             await self.show_graph()
 
+    def edit_labels(self, index):
+        if self.busy: return
+        if self.metadata_dialog: self.metadata_dialog.close()
+        self.edit_index = index
+        ds = self.project.cfg['datasets'][index]
+        with ui.dialog().props('persistent') as self.metadata_dialog, ui.card().classes('w-96 max-w-full'):
+            ui.label(Path(ds['path']).name).classes('font-bold')
+            self.label_inputs = [ui.input(key, value=ds.get(key, '')).classes('w-full') for key in ('group', 'lot', 'phase')]
+            with ui.row():
+                ui.button('cancel', on_click=self.metadata_dialog.close).props('flat')
+                ui.button('save labels', on_click=self.relabel).mark('save-labels')
+        self.metadata_dialog.open()
+
     async def relabel(self):
+        if self.busy: return
         cfg = self.project.configuration()
-        cfg.pop('groups', None); cfg.pop('selection', None); cfg.pop('styles', None)
-        for ds, (group, lot, phase) in zip(cfg['datasets'], self.label_inputs):
-            ds.update(group=group.value.strip(), lot=lot.value.strip(), phase=phase.value.strip())
-            if not ds['group'] or not ds['phase']:
-                ui.notify('Group and phase names are required', type='warning'); return
+        ds = cfg['datasets'][self.edit_index]
+        old = dict(ds)
+        ds.update(zip(('group', 'lot', 'phase'), (field.value.strip() for field in self.label_inputs)))
+        try:
+            validate_labels(ds)
+        except ValueError as exc:
+            ui.notify(str(exc), type='warning')
+            return
+        present = list(dict.fromkeys(d['group'] for d in cfg['datasets']))
+        selected = set(cfg['selection']['groups'])
+        if old['group'] in selected: selected.add(ds['group'])
+        cfg['groups'] = list(dict.fromkeys([ds['group'] if g == old['group'] else g for g in self.project.groups] + present))
+        cfg['groups'] = [g for g in cfg['groups'] if g in present]
+        cfg['selection']['groups'] = [g for g in cfg['groups'] if g in selected]
+        phases = {d['phase'] for d in cfg['datasets']}
+        cfg['selection']['phases'] = [phase if phase in phases else ds['phase'] for phase in cfg['selection']['phases']]
+        excluded = cfg['selection'].get('exclude_mice', [])
+        animal_ids = self.project.datasets[self.edit_index].animals['Animal'].to_list()
+        renamed = [{**m, 'group': ds['group'], 'lot': ds['lot']} for m in excluded
+                   if (m['group'], m['lot']) == (old['group'], old.get('lot', '')) and m['animal'] in animal_ids]
+        known = {(d['group'], d.get('lot', ''), animal) for d, dataset in zip(cfg['datasets'], self.project.datasets)
+                 for animal in dataset.animals['Animal']}
+        cfg['selection']['exclude_mice'] = [m for m in excluded if (m['group'], m['lot'], m['animal']) in known]
+        cfg['selection']['exclude_mice'].extend(m for m in renamed if m not in cfg['selection']['exclude_mice'])
         project = await self.task(Project, cfg)
-        if project: await self.install(project)
+        if project:
+            self.metadata_dialog.close()
+            await self.install(project)
 
     def graph_choices(self, preferred=None):
         options = {analysis_name(a): a['title'] for a in self.project.analyses if a.get('section', 'Analysis') == self.section.value}
@@ -414,6 +501,8 @@ h1,h2{letter-spacing:-.025em}.plotly-graph-div{border-radius:12px}.muted{color:#
         self.render_version += 1
         if self.import_dialog:
             self.import_dialog.close()
+        if self.metadata_dialog:
+            self.metadata_dialog.close()
         if not keep_labels: self.dataset_labels.clear()
         self.project = None
         self.show_folders()
@@ -538,7 +627,8 @@ h1,h2{letter-spacing:-.025em}.plotly-graph-div{border-radius:12px}.muted{color:#
         mice = {(ds.group, ds.lot, animal) for ds in remaining for animal in ds.animals['Animal']}
         cfg['colors'] = colors_for(self.project.groups, cfg.get('colors'))
         cfg['groups'] = [g for g in self.project.groups if g in groups]
-        cfg['selection']['groups'] = [g for g in self.project.selection['groups'] if g in groups] or cfg['groups']
+        selected = self.project.selection['groups']
+        cfg['selection']['groups'] = ([g for g in selected if g in groups] or cfg['groups']) if selected else []
         cfg['selection']['phases'] = [p for p in self.project.selection.get('phases', []) if p in phases] or phases[:1]
         cfg['selection']['exclude_mice'] = [m for m in self.project.selection.get('exclude_mice', [])
                                              if (m['group'], m['lot'], m['animal']) in mice]

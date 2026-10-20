@@ -137,7 +137,7 @@ class Project:
         self.cfg['settings'] = candidate
         self.tables = tables
         self.analyses = analyses_for(self.cfg, tables)
-        self.cache.clear()
+        self.cache = {}
         self.selection.setdefault('groups', self.groups)
         self.selection.setdefault('phases', self.phases[:1])
 
@@ -146,14 +146,15 @@ class Project:
         for table in self.tables.values():
             select_data(table, {}, self.groups, selection)
         self.selection = copy.deepcopy(selection)
-        self.cache.clear()
+        self.cache = {}
 
     def result(self, name):
-        if name not in self.cache:
+        cache, selection = self.cache, self.selection
+        if name not in cache:
             analysis = next(a for a in self.analyses if analysis_name(a) == name)
             try:
                 result = render_analysis(analysis, self.tables[analysis['table']], self.groups,
-                    P.colors_for(self.groups, self.cfg.get('colors')), self.cfg['settings'], self.starts, self.selection)
+                    P.colors_for(self.groups, self.cfg.get('colors')), self.cfg['settings'], self.starts, selection)
             except ValueError as exc:
                 if str(exc) not in {'No data for this selection', 'No common observations for the selected groups'}:
                     raise
@@ -161,9 +162,9 @@ class Project:
                 figure.add_annotation(text=str(exc), showarrow=False, x=.5, y=.5, xref='paper', yref='paper')
                 figure.update_layout(title_text=analysis['title'], template='simple_white', height=540)
                 result = {'figure': figure, 'stats': {}, 'tests': [], 'notes': [str(exc)],
-                          'data': select_data(self.tables[analysis['table']], analysis, self.groups, self.selection)}
-            self.cache[name] = result
-        original = self.cache[name]
+                          'data': select_data(self.tables[analysis['table']], analysis, self.groups, selection)}
+            cache[name] = result
+        original = cache[name]
         result = {**original, 'figure': go.Figure(original['figure'])}
         style = self.styles.get(name, {})
         merge_layout(result['figure'], style.get('layout', {}))

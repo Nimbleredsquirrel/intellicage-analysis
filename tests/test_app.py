@@ -134,9 +134,9 @@ async def test_dashboard_filters_edits_and_downloads(config):
         await wait_loaded(page)
         await user.should_see(marker='plot')
         with user.client:
-            page.group_select.set_value(['control'])
-            page.mouse_select.set_value([0])
-            await page.apply_selection()
+            page.group_checkboxes['ko'].set_value(False)
+            page.mouse_checkboxes[('control', 'lot 1', 1)].set_value(False)
+        await asyncio.sleep(.2)
         result = page.project.result(page.name)
         assert set(result['data']['group']) == {'control'}
         assert 1 not in result['data']['animal']
@@ -219,17 +219,20 @@ async def test_settings_labels_colors_and_native_folder(config, tmp_path, monkey
         monkeypatch.setattr(app.native,'main_window',SimpleNamespace(create_file_dialog=AsyncMock(return_value=None), signal_server_shutdown=lambda:None))
         with user.client: await page.native_folder()
         with user.client:
-            page.label_inputs[0][0].set_value('renamed')
+            page.edit_labels(0)
+            page.label_inputs[0].set_value('renamed')
             await page.relabel()
         assert page.project.datasets[0].group=='renamed'
         with user.client:
-            page.label_inputs[0][0].set_value('')
+            page.edit_labels(0)
+            page.label_inputs[0].set_value('')
             await page.relabel()
         assert user.notify.contains('names are required')
         with user.client:
-            page.group_select.set_value([])
-            await page.apply_selection()
-        assert user.notify.contains('Select a group')
+            page.metadata_dialog.close()
+            for box in page.group_checkboxes.values(): box.set_value(False)
+        await asyncio.sleep(.2)
+        assert page.project.result(page.name)['data'].is_empty()
 
 
 @pytest.mark.asyncio
@@ -260,8 +263,7 @@ async def test_upload_zip_project_and_empty_selection(config,tmp_path):
         await asyncio.sleep(.2)
         assert page.project.datasets[0].group=='control'
         with user.client:
-            page.mouse_select.set_value(list(page.mouse_select.options))
-            await page.apply_selection()
+            await page.set_mice(False)
         assert page.project.result(page.name)['data'].is_empty()
         assert page.project.result(page.name)['notes']
         with user.client: await page.export_all()
