@@ -176,6 +176,7 @@ h1,h2{letter-spacing:-.025em}.plotly-graph-div{border-radius:12px}.muted{color:#
         self.heading = ui.label(APP_NAME).classes('text-3xl font-bold')
         self.summary = ui.label('Load your exports to begin.').classes('muted')
         self.sources = ui.column().classes('w-full gap-2')
+        self.calculations = ui.column().classes('w-full gap-3').mark('calculation-settings')
         with ui.row().classes('w-full items-end gap-4'):
             self.section = ui.select([], label='section', on_change=self.choose_section).classes('w-52').mark('section')
             self.graph_select = ui.select({}, label='graph', with_input=True, on_change=self.choose_graph).classes('grow').mark('graph')
@@ -224,6 +225,7 @@ h1,h2{letter-spacing:-.025em}.plotly-graph-div{border-radius:12px}.muted{color:#
                 if gate is not None:
                     ui.label(f'AnimalGate: {gate.filter(~pl.col("paired")).height} single-direction records. Keep all records or use paired records only in settings.').classes('muted')
         self.build_filters()
+        self.build_calculations()
         sections = list(dict.fromkeys(a.get('section', 'Analysis') for a in project.analyses))
         self.updating_choices = True
         try:
@@ -247,23 +249,31 @@ h1,h2{letter-spacing:-.025em}.plotly-graph-div{border-radius:12px}.muted{color:#
             ui.label('phase').classes('font-medium')
             self.phase_select = ui.radio(p.phases, value=next(iter(p.selection['phases']), None)).mark('phase')
             self.phase_select.on_value_change(self.choose_selection)
-            ui.label('mice').classes('font-medium')
-            with ui.row().classes('gap-1'):
-                ui.button('select all', on_click=lambda: self.set_mice(True)).props('flat dense').mark('select-all-mice')
-                ui.button('clear all', on_click=lambda: self.set_mice(False)).props('flat dense').mark('clear-all-mice')
-            self.mice_area = ui.column().classes('w-full gap-1').mark('mice')
-            self.show_mice()
+            with ui.expansion('mice', value=False).classes('w-full').props('dense header-class=font-medium').mark('mice-selection') as self.mice_expansion:
+                with ui.row().classes('gap-1'):
+                    ui.button('select all', on_click=lambda: self.set_mice(True)).props('flat dense').mark('select-all-mice')
+                    ui.button('clear all', on_click=lambda: self.set_mice(False)).props('flat dense').mark('clear-all-mice')
+                self.mice_area = ui.column().classes('w-full gap-1').mark('mice')
+                self.show_mice()
+
+    def build_calculations(self):
+        p = self.project
+        self.calculations.clear()
+        with self.calculations:
             self.window_inputs, self.window_ranges, self.range_areas = [], {}, {}
-            with ui.expansion('calculation settings').classes('w-full'):
+            ui.label('calculation settings').classes('text-lg font-bold')
+            with ui.column().classes('w-full gap-3'):
                 ui.label(f'recorded dates: {min(ds.start.date() for ds in p.datasets)} — {max(ds.end.date() for ds in p.datasets)}').classes('muted')
                 windows = period_windows(p.cfg['settings'])
                 for i, w in enumerate(windows):
                     name = w['name']
                     label = {'Light': 'day', 'Dark': 'night'}.get(name, name)
-                    with ui.expansion(label, value=True).classes('w-full').mark(f'window-{i}'):
+                    ui.label(label).classes('font-medium').mark(f'window-{i}')
+                    with ui.column().classes('w-full gap-2'):
                         ui.label('default hours').classes('muted')
-                        start = ui.input('from', value=self.clock_text(w['start'])).props('type=time').classes('w-full')
-                        end = ui.input('until', value=self.clock_text(w['end'])).props('type=time').classes('w-full')
+                        with ui.row().classes('items-end gap-4'):
+                            start = ui.input('from', value=self.clock_text(w['start'])).props('type=time').classes('w-40 max-w-full')
+                            end = ui.input('until', value=self.clock_text(w['end'])).props('type=time').classes('w-40 max-w-full')
                         self.window_inputs.append((name, start, end))
                         self.window_ranges[name] = []
                         self.range_areas[name] = ui.column().classes('w-full gap-2')
@@ -296,13 +306,13 @@ h1,h2{letter-spacing:-.025em}.plotly-graph-div{border-radius:12px}.muted{color:#
     def add_window_range(self, name, rule=None):
         rule = rule or {}
         with self.range_areas[name]:
-            with ui.column().classes('w-full border rounded-lg p-2 gap-2') as container:
+            with ui.row().classes('w-full items-end border rounded-lg p-3 gap-4') as container:
                 row = {'container': container}
-                row['date_from'] = ui.input('from date', value=rule.get('date_from', '')).props('type=date').classes('w-full')
-                row['date_to'] = ui.input('through date', value=rule.get('date_to', '')).props('type=date').classes('w-full')
+                row['date_from'] = ui.input('from date', value=rule.get('date_from', '')).props('type=date').classes('w-44 max-w-full')
+                row['date_to'] = ui.input('through date', value=rule.get('date_to', '')).props('type=date').classes('w-44 max-w-full')
                 start, end = next((s, e) for n, s, e in self.window_inputs if n == name)
-                row['start'] = ui.input('from', value=self.clock_text(rule['start']) if rule else start.value).props('type=time').classes('w-full')
-                row['end'] = ui.input('until', value=self.clock_text(rule['end']) if rule else end.value).props('type=time').classes('w-full')
+                row['start'] = ui.input('from', value=self.clock_text(rule['start']) if rule else start.value).props('type=time').classes('w-40 max-w-full')
+                row['end'] = ui.input('until', value=self.clock_text(rule['end']) if rule else end.value).props('type=time').classes('w-40 max-w-full')
                 ui.button('remove range', icon='close', on_click=lambda: self.remove_window_range(name, row)).props('flat dense')
         self.window_ranges[name].append(row)
 
@@ -546,7 +556,7 @@ h1,h2{letter-spacing:-.025em}.plotly-graph-div{border-radius:12px}.muted{color:#
         self.show_folders()
         self.name = None
         self.pending_specs = None
-        for area in (self.filters, self.sources, self.graph_area, self.editor_area, self.details_area):
+        for area in (self.filters, self.sources, self.calculations, self.graph_area, self.editor_area, self.details_area):
             area.clear()
         self.section.set_options([], value=None)
         self.graph_select.set_options({}, value=None)

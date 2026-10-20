@@ -133,8 +133,13 @@ async def test_ui_date_rules_apply_remove_and_restore(config, tmp_path):
     async with user_simulation(root) as user:
         await user.open('/')
         page = pages[0]
-        assert any(isinstance(e, ui.expansion) and e.text == 'day' for e in page.filters.descendants())
-        assert any(isinstance(e, ui.expansion) and e.text == 'night' for e in page.filters.descendants())
+        assert any(isinstance(e, ui.label) and e.text == 'day' for e in page.calculations.descendants())
+        assert any(isinstance(e, ui.label) and e.text == 'night' for e in page.calculations.descendants())
+        assert not any(isinstance(e, ui.label) and e.text == 'calculation settings' for e in page.filters.descendants())
+        assert page.sources.parent_slot is page.calculations.parent_slot
+        assert page.sources.id < page.calculations.id < page.section.id
+        assert not any(isinstance(e, ui.expansion) and e.text in ('day', 'night', 'calculation settings')
+                       for e in page.calculations.descendants())
         before = page.project.tables['activity_periods'].clone()
         graph = page.name
         for index, start, end in [(0, '10:00', '16:00'), (1, '22:00', '04:00')]:

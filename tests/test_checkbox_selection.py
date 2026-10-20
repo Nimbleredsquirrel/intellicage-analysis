@@ -36,7 +36,10 @@ async def test_checkboxes_include_mice_and_refresh_without_apply(config):
         assert all(box.value for box in page.group_checkboxes.values())
         assert all(box.value for box in page.mouse_checkboxes.values())
         assert isinstance(page.phase_select, ui.radio)
+        assert not page.mice_expansion.value
+        assert all(box in list(page.mice_expansion.descendants()) for box in page.mouse_checkboxes.values())
         assert not any(isinstance(e, ui.button) and e.text == 'apply selection' for e in page.filters.descendants())
+        with user.client: page.mice_expansion.open()
         user.find(marker='mouse-0').click()
         await settled(page)
         assert page.project.selection['exclude_mice'] == [{'group': 'control', 'lot': 'lot 1', 'animal': 1}]
@@ -74,6 +77,7 @@ async def test_phase_and_bulk_choices_only_change_visible_mice(config, export_fa
     async with user_simulation(root) as user:
         await user.open('/')
         page = pages[0]
+        with user.client: page.mice_expansion.open()
         user.find(marker='mouse-0').click()
         await settled(page)
         with user.client: page.phase_select.set_value('phase 2')
@@ -109,6 +113,7 @@ async def test_folder_label_editor_preserves_checked_mice(config):
         page = pages[0]
         graph = page.name
         page.project.edit_layout(graph, {'title.text': 'my title'})
+        with user.client: page.mice_expansion.open()
         user.find(marker='mouse-0').click()
         await settled(page)
         user.find(marker='edit-labels-0').click()
