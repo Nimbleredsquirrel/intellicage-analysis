@@ -28,7 +28,6 @@ requires-poetry = ">=2.2,<3"
 pytest = ">=9.1.1,<10"
 pytest-cov = ">=7,<8"
 pytest-asyncio = ">=1,<2"
-playwright = ">=1.55,<2"
 
 [tool.poetry.group.build]
 optional = true
@@ -43,7 +42,6 @@ addopts = "-ra --strict-markers --strict-config --cov --cov-report=term-missing"
 asyncio_mode = "auto"
 markers = [
     "real_data: checks against the local IntelliCage exports and Prism expectations",
-    "browser: real browser interaction checks",
 ]
 
 [tool.coverage.run]

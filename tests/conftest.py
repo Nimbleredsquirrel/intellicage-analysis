@@ -87,14 +87,3 @@ def config(datasets):
                          {"table": "activity_hourly", "value": "visits_n", "by": "hour", "stats": False,
                           "title": "Activity"},
                          {"table": "gate_sessions", "plot": "gate_raster", "title": "Gate"}]}
-
-
-def pytest_addoption(parser):
-    parser.addoption('--run-browser', action='store_true', default=False, help='run Chrome interaction checks')
-
-
-def pytest_collection_modifyitems(config, items):
-    if not config.getoption('--run-browser'):
-        for item in items:
-            if 'browser' in item.keywords:
-                item.add_marker(pytest.mark.skip(reason='use --run-browser with Chrome installed'))
