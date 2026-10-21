@@ -12,14 +12,29 @@ class GraphBoard:
     def __init__(self, owner):
         self.owner, self.cards, self.plots = owner, {}, {}
         self.checkboxes, self.titles, self.badges = {}, {}, {}
-        ui.label('dashboard').classes('text-lg font-bold')
-        ui.label('Choose graphs below. Drag by the handle to reorder; drag the bottom-right corner to resize.').classes('muted')
-        ui.label('Your title, legend and colour edits follow each graph. Removing a graph keeps its edits.').classes('muted text-sm')
-        with ui.expansion('add / remove graphs', icon='checklist', value=True).classes('w-full') as self.picker:
-            with ui.row().classes('w-full items-center'):
-                self.search = ui.input('search graphs', on_change=lambda: self.refresh_picker()).props('clearable dense').classes('grow').mark('dashboard-search')
-                self.edited_only = ui.checkbox('edited only', on_change=lambda: self.refresh_picker()).mark('dashboard-edited-only')
-            self.choices = ui.column().classes('w-full gap-1').style('max-height:35vh;overflow-y:auto;display:block')
+        self.draft = None
+        self.selection_project = None
+        with ui.row().classes('w-full items-center gap-3'):
+            ui.label('dashboard').classes('text-lg font-bold')
+            self.count = ui.label().classes('muted')
+            ui.space()
+            ui.button('choose graphs', icon='add_chart', on_click=self.open_picker).mark('dashboard-choose')
+        ui.label('Drag by the handle to reorder; drag the bottom-right corner to resize.').classes('muted')
+        with ui.dialog() as self.picker:
+            with ui.card().classes('w-full max-w-2xl gap-3').style('width:680px;max-height:85vh'):
+                with ui.row().classes('w-full items-center'):
+                    ui.label('choose graphs').classes('text-lg font-bold grow')
+                    ui.button(icon='close', on_click=self.picker.close).props('flat round dense').tooltip('cancel')
+                ui.label('Edits follow each graph. Removing a graph keeps its title, legend and colours.').classes('muted')
+                with ui.row().classes('w-full items-center'):
+                    self.search = ui.input('search graphs', on_change=lambda: self.refresh_picker()).props('clearable dense').classes('grow').mark('dashboard-search')
+                    self.edited_only = ui.checkbox('edited only', on_change=lambda: self.refresh_picker()).mark('dashboard-edited-only')
+                self.choices = ui.column().classes('w-full gap-1').style('min-height:120px;max-height:50vh;overflow-y:auto;display:block')
+                ui.separator()
+                with ui.row().classes('w-full items-center justify-end'):
+                    self.selection_count = ui.label().classes('muted mr-auto')
+                    ui.button('cancel', on_click=self.picker.close).props('flat').mark('dashboard-cancel')
+                    self.apply_button = ui.button('apply', on_click=self.apply_selection).mark('dashboard-apply')
 
         self.container = ui.row().classes('w-full items-start gap-4').mark('graph-board')
         self.sortable = self.container.make_sortable(handle='.chart-drag-handle', on_end=self.reordered)
@@ -35,6 +50,9 @@ class GraphBoard:
         return workspace['charts']
 
     def prepare(self):
+        if self.selection_project is not self.owner.project:
+            self.picker.close()
+            self.draft = None
         names = {analysis_name(a) for a in self.owner.project.analyses}
         valid = []
         for panel in self.panels:
@@ -45,14 +63,18 @@ class GraphBoard:
                 item[key] = max(minimum, min(4000, int(value))) if isinstance(value, (int, float)) and math.isfinite(value) else default
             valid.append(item)
         self.owner.project.cfg['workspace'] = {'charts': valid}
-        self.owner.page_tab.set_label(f'dashboard ({len(valid)})' if valid else 'dashboard')
+        self.update_count()
         self.refresh_picker()
 
     def clear(self):
         self.container.clear()
         self.cards, self.plots, self.titles, self.badges = {}, {}, {}, {}
+        if self.owner.project is not self.selection_project:
+            self.picker.close()
+            self.draft = None
+        self.update_count()
         self.refresh_picker()
-        with self.container: ui.label('No graphs yet. Choose graphs from the list above.').classes('muted')
+        with self.container: ui.label('No graphs yet. Use “choose graphs” to build your dashboard.').classes('muted')
 
     def is_edited(self, name):
         style = self.owner.project.styles.get(name, {})
@@ -67,8 +89,8 @@ class GraphBoard:
         self.choices.clear()
         self.checkboxes = {}
         project = self.owner.project
-        selected = {p['name'] for p in self.panels}
-        self.picker.props(f'caption="{len(selected)} selected"')
+        selected = self.draft if self.picker.value and self.selection_project is project else {p['name'] for p in self.panels}
+        self.selection_count.set_text(f'{len(selected)} selected')
         if not project: return
         query = (self.search.value or '').casefold().strip()
         sections = {}
@@ -86,16 +108,46 @@ class GraphBoard:
                 for name, title, edited in entries:
                     with ui.row().classes('w-full items-center no-wrap gap-2'):
                         self.checkboxes[name] = ui.checkbox(title, value=name in selected,
-                            on_change=lambda e, name=name: self.toggle(name, e.value)).classes('grow').mark(f'dashboard-choice-{name}')
+                            on_change=lambda e, name=name: self.select(name, e.value)).classes('grow').mark(f'dashboard-choice-{name}')
                         ui.badge('edited' if edited else 'default', color='primary' if edited else 'grey').props('outline').mark(f'dashboard-status-{name}')
 
-    async def toggle(self, name, included):
-        if not self.owner.project: return
-        if included: self.add(name)
-        else:
-            self.owner.project.cfg['workspace']['charts'] = [p for p in self.panels if p['name'] != name]
-            self.prepare()
-        await self.owner.show_graph()
+    def update_count(self):
+        count = len(self.panels)
+        self.count.set_text(f'{count} graphs')
+        self.owner.page_tab.set_label(f'dashboard ({count})' if count else 'dashboard')
+
+    def open_picker(self):
+        if not self.owner.project:
+            ui.notify('Add your data folders first', type='info')
+            return
+        self.selection_project = self.owner.project
+        self.draft = {p['name'] for p in self.panels}
+        self.picker.open()
+        self.refresh_picker()
+
+    def select(self, name, included):
+        if self.selection_project is not self.owner.project or self.draft is None: return
+        if included: self.draft.add(name)
+        else: self.draft.discard(name)
+        self.selection_count.set_text(f'{len(self.draft)} selected')
+
+    async def apply_selection(self):
+        project = self.owner.project
+        if not project or project is not self.selection_project or self.draft is None: return
+        if self.owner.busy: return
+        # keep the order and sizes of existing cards
+        panels = [p for p in self.panels if p['name'] in self.draft]
+        existing = {p['name'] for p in panels}
+        panels.extend({'name': name, 'width': 480, 'height': 520}
+                      for analysis in project.analyses
+                      if (name := analysis_name(analysis)) in self.draft and name not in existing)
+        project.cfg['workspace']['charts'] = panels
+        self.draft = None
+        self.picker.close()
+        self.prepare()
+        # rendering belongs to the page, never a checkbox that may be removed
+        with self.container:
+            await self.owner.show_graph()
 
     def edited(self, project, name, kind, event):
         if project is not self.owner.project or name not in self.plots: return
@@ -112,7 +164,7 @@ class GraphBoard:
             ui.notify('This graph is already on dashboard', type='info')
             return
         self.panels.append({'name': name, 'width': 480, 'height': 520})
-        self.owner.page_tab.set_label(f'dashboard ({len(self.panels)})')
+        self.update_count()
         self.refresh_picker()
         ui.notify('Added to dashboard', type='positive')
 

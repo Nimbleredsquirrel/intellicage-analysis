@@ -139,7 +139,9 @@ async def test_ui_date_rules_apply_remove_and_restore(config, tmp_path):
         assert any(isinstance(e, ui.label) and e.text == 'night' for e in page.calculations.descendants())
         assert not any(isinstance(e, ui.label) and e.text == 'calculation settings' for e in page.filters.descendants())
         assert not page.window_settings.visible
-        assert page.sources.id < page.calculations.id < page.section.id
+        assert page.drawer in list(page.sources.ancestors())
+        assert page.drawer not in list(page.calculations.ancestors())
+        assert page.calculations.id < page.section.id
         assert not any(isinstance(e, ui.expansion) and e.text in ('day', 'night', 'calculation settings')
                        for e in page.calculations.descendants())
         before = page.project.tables['activity_periods'].clone()

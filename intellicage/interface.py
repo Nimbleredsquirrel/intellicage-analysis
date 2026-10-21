@@ -181,9 +181,10 @@ h1,h2{letter-spacing:-.025em}.plotly-graph-div{border-radius:12px}.muted{color:#
                     self.show_folders()
                     ui.separator().classes('my-4')
                     self.filters = ui.column().classes('w-full gap-3')
+                    ui.separator().classes('my-2')
+                    self.sources = ui.column().classes('w-full gap-2 break-words').mark('exports-checks')
         self.heading = ui.label(APP_NAME).classes('text-3xl font-bold')
         self.summary = ui.label('Load your exports to begin.').classes('muted')
-        self.sources = ui.column().classes('w-full gap-2')
         with ui.tabs(value='graphs', on_change=self.change_workspace).classes('w-full').props('align=left no-caps').mark('workspace-tabs') as self.workspace_tabs:
             ui.tab('graphs', label='graphs', icon='bar_chart')
             self.page_tab = ui.tab('page', label='dashboard', icon='dashboard')
@@ -207,7 +208,7 @@ h1,h2{letter-spacing:-.025em}.plotly-graph-div{border-radius:12px}.muted{color:#
                 self.table_select = ui.select({}, label='table', on_change=self.show_table).classes('w-96 max-w-full').mark('table-choice')
                 self.table_content = ui.column().classes('w-full min-w-0').mark('table-preview')
         self.task_controls = [self.new_button, self.save_button, self.export_button, self.section, self.graph_select, self.analysis_view]
-        self.task_controls.extend(button for button in [self.folder_button, self.open_button] if button is not None)
+        self.task_controls.extend(button for button in [self.folder_button, self.open_button, self.board.apply_button] if button is not None)
 
     def show_folders(self):
         self.folder_list.clear()

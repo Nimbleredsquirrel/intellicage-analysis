@@ -258,7 +258,9 @@ async def test_dashboard_picker_keeps_edits_when_graphs_are_removed(config, tmp_
         assert page.page_tab.label == 'dashboard'
         assert len(board.checkboxes) == len(project.analyses)
         assert not board.is_edited(second)
+        user.find(marker='dashboard-choose').click()
         user.find(marker=f'dashboard-choice-{first}').click()
+        user.find(marker='dashboard-apply').click()
         await settled(page)
         assert set(board.plots) == {first}
         user.find(marker=f'board-size-{first}').trigger('resize', {'width': 680, 'height': 430})
@@ -272,13 +274,17 @@ async def test_dashboard_picker_keeps_edits_when_graphs_are_removed(config, tmp_
         with user.client: board.search.set_value('nothing matches this')
         assert not board.checkboxes
         with user.client: board.search.set_value('renamed')
+        user.find(marker='dashboard-choose').click()
         user.find(marker=f'dashboard-choice-{first}').click()
+        user.find(marker='dashboard-apply').click()
         await settled(page)
         assert not board.panels and not board.plots
         assert board.checkboxes[first].value is False
         board.edited(project, first, 'layout', {'title.text': 'stale event'})
         assert board.is_edited(first)
+        user.find(marker='dashboard-choose').click()
         user.find(marker=f'dashboard-choice-{first}').click()
+        user.find(marker='dashboard-apply').click()
         await settled(page)
         figure = board.plots[first].figure
         assert figure['layout']['title']['text'] == 'renamed on dashboard'
@@ -289,7 +295,9 @@ async def test_dashboard_picker_keeps_edits_when_graphs_are_removed(config, tmp_
             board.edited_only.set_value(False)
             board.search.set_value('')
         user.find(marker=f'board-size-{first}').trigger('resize', {'width': 680, 'height': 430})
+        user.find(marker='dashboard-choose').click()
         user.find(marker=f'dashboard-choice-{second}').click()
+        user.find(marker='dashboard-apply').click()
         await settled(page)
         assert board.panels[0] == {'name': first, 'width': 680, 'height': 430}
         with user.client: await page.install(Project.open(project.save(), tmp_path/'dashboard'))
@@ -306,3 +314,59 @@ async def test_dashboard_picker_keeps_edits_when_graphs_are_removed(config, tmp_
         assert board.checkboxes[first].text == page.project.analyses[0]['title']
         with user.client: page.new_project()
         assert not board.checkboxes
+
+
+@pytest.mark.asyncio
+async def test_dashboard_dialog_batches_selection_and_cancels_without_changes(config, monkeypatch):
+    import time
+    pages = []
+    async def root():
+        page = Explorer(None, local=True, native=True)
+        pages.append(page)
+        await page.install(Project(config))
+    async with user_simulation(root) as user:
+        await user.open('/')
+        page = pages[0]
+        board = page.board
+        assert not board.picker.value
+        assert page.drawer in list(page.sources.ancestors())
+        assert page.sources not in list(board.container.ancestors())
+        with user.client: page.workspace_tabs.set_value('page')
+        await settled(page)
+        names = [analysis_name(a) for a in page.project.analyses[:3]]
+        calls = []
+        original = page.project.result
+        def slow_result(name):
+            calls.append(name)
+            time.sleep(.02)
+            return original(name)
+        monkeypatch.setattr(page.project, 'result', slow_result)
+        user.find(marker='dashboard-choose').click()
+        boxes = [board.checkboxes[name] for name in names]
+        for name in names: user.find(marker=f'dashboard-choice-{name}').click()
+        await asyncio.sleep(.05)
+        assert not calls
+        assert not board.panels
+        assert all(board.checkboxes[name] is box and not box.is_deleted for name, box in zip(names, boxes))
+        with user.client: board.search.set_value('no matches')
+        assert not board.checkboxes
+        with user.client: board.search.set_value('')
+        assert all(board.checkboxes[name].value for name in names)
+        user.find(marker='dashboard-apply').click()
+        await settled(page)
+        assert not board.picker.value
+        assert calls == names
+        assert list(board.plots) == names
+        assert all(plot.figure['data'] for plot in board.plots.values())
+        assert board.count.text == '3 graphs'
+        user.find(marker='dashboard-choose').click()
+        user.find(marker=f'dashboard-choice-{names[0]}').click()
+        user.find(marker='dashboard-cancel').click()
+        assert [p['name'] for p in board.panels] == names
+        user.find(marker='dashboard-choose').click()
+        assert board.checkboxes[names[0]].value
+        with user.client: page.new_project()
+        assert not board.picker.value
+        assert not board.checkboxes
+        user.find(marker='dashboard-choose').click()
+        assert user.notify.contains('Add your data folders first')
