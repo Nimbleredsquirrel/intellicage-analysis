@@ -162,8 +162,8 @@ async def test_empty_start_and_folder_import(config):
     async with user_simulation(root) as user:
         app.router.routes.insert(0, APIRoute('/imports/{token}', import_folder, methods=['POST']))
         await user.open('/')
-        await user.should_see('Load your exports to begin.')
         page = pages[0]
+        assert page.project is None and page.summary.text == ''
         token = page.token
         response = await user.http_client.post(f'/imports/{token}', files=[
             ('files', (f'export/{p.name}', p.read_bytes()))
@@ -603,8 +603,7 @@ async def test_remove_folders_updates_results_and_keeps_source_files(config, tmp
         assert not any(page.filters.descendants())
         assert len(page.folder_remove_buttons) == 0
         assert (last/'Visit.txt').is_file()
-        assert any(isinstance(e, ui.label) and e.text == 'no folders added'
-                   for e in page.folder_list.descendants())
+        assert not any(page.folder_list.descendants())
         with user.client:
             await page.remove_folder(last)
 

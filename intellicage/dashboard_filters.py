@@ -11,7 +11,7 @@ class DashboardFilters:
     def __init__(self, owner):
         self.owner, self.updating, self.signature, self.project = owner, False, None, None
         self.draft, self.mouse_records = {}, {}
-        with ui.row().classes('dashboard-filters w-full items-end gap-3 p-3 rounded-lg'):
+        with ui.row().classes('dashboard-filters w-full items-end gap-3 p-3 rounded-lg') as self.area:
             self.groups = ui.select([], label='groups', value=[], multiple=True, with_input=True, on_change=self.changed).classes('w-52')
             self.phase = ui.select([], label='phase', on_change=self.changed).classes('w-52')
             self.mice = ui.select({}, label='mice', value=[], multiple=True, with_input=True, on_change=self.changed_mice).classes('w-60')

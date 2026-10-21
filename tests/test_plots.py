@@ -7,6 +7,19 @@ import pytest
 from intellicage import plots as P
 
 
+def test_batch_png_export_keeps_layout_and_uses_high_resolution(tmp_path, monkeypatch):
+    import plotly.graph_objects as go
+
+    figure = go.Figure(go.Scatter(x=[1, 2], y=[2, 3]))
+    figure.update_layout(width=840, height=420)
+    exports = []
+    monkeypatch.setattr(go.Figure, 'write_image', lambda self, path, **kwargs: exports.append((path, kwargs)))
+    P.save(figure, tmp_path / 'graph.html', tmp_path / 'graph.png')
+    assert (tmp_path / 'graph.html').is_file()
+    assert exports == [(tmp_path / 'graph.png', {'width': 840, 'height': 420, 'scale': 4})]
+    assert (figure.layout.width, figure.layout.height) == (840, 420)
+
+
 @pytest.mark.parametrize("style", ["bar", "scatter"])
 def test_column_graph_shows_each_mouse_mean_sem_and_pairwise_result(tables, style):
     data = tables["mouse_summary"]

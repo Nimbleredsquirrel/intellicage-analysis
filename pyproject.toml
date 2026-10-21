@@ -15,10 +15,12 @@ dependencies = [
     "pyyaml>=6.0.3,<7",
     "nicegui>=3.18,<4",
     "pywebview>=6.2.1,<7",
+    "kaleido>=1.1,<2",
+    "pillow>=13,<14",
 ]
 
 [project.optional-dependencies]
-export = ["kaleido>=1.1,<2"]
+export = []
 
 [tool.poetry]
 package-mode = false

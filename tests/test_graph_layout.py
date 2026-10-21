@@ -28,13 +28,14 @@ def test_default_prism_bracket_has_ns_and_exact_p_on_hover(tables):
     assert 'adjusted P' in mark.hovertext and 'raw P' in mark.hovertext
     bracket = [s for s in fig.layout.shapes if s.name == 'stat-bracket']
     assert len(bracket) == 3
+    assert all(s.line.width == 3 and s.line.color == '#111111' for s in bracket)
     assert bracket[1].x0 == 0 and bracket[1].x1 == 1
     assert 0 < bracket[1].y0 < 1
     assert mark.yref == 'y domain'
     assert mark.y > 0
     assert fig.layout.yaxis.autorangeoptions.include > _data_limits(fig, 'y')[1]
     summary = next(n for n in fig.layout.annotations if n.name == 'analysis-summary')
-    assert 'Welch' in summary.text and 'P=' in summary.text and 'SEM' in summary.text
+    assert 'Welch' in summary.text and 'ns' in summary.text and 'SEM' in summary.text
 
 
 def test_ns_is_visible_only_for_estimable_non_significant_comparisons(tables):
@@ -54,10 +55,47 @@ def test_repeated_summary_separates_omnibus_from_pairwise(tables):
     result = result_for({'table': 'corner_summary', 'value': 'time_s', 'by': 'corner'}, tables)
     summary = next(n for n in result['figure'].layout.annotations if n.name == 'analysis-summary')
     text = summary.text
-    assert 'model P values' in text
-    assert 'group: P=' in text and 'corner: P=' in text
-    assert 'pairwise:' in text
+    assert 'mixed ANOVA' in text
+    assert 'group: ns' in text and 'corner: ***' in text
+    assert 'pairwise:' not in text
     assert summary.yref == 'paper' and summary.y == 0 and summary.yshift < 0
+
+
+@pytest.mark.parametrize('mode', ['p', 'stars', 'both'])
+def test_lower_caption_uses_pdf_heading_and_one_bullet_per_effect(tables, mode):
+    from intellicage.graph_layout import plain_text
+
+    fig = result_for({'table': 'corner_summary', 'value': 'time_s', 'by': 'corner',
+                      'title': 'Time spent in each corner'}, tables, significance=mode)['figure']
+    notes = {n.name: n for n in fig.layout.annotations if n.name in ('analysis-heading', 'analysis-summary', 'sample-size')}
+    assert plain_text(notes['analysis-heading'].text) == 'Time spent in each corner'
+    source = fig.layout.meta[KEY]['footer_sources']['analysis-summary']['source']
+    bullets = [line for line in source.split('<br>') if line.startswith('• ')]
+    assert len(bullets) == 3
+    assert all(line.endswith('(Two-way mixed ANOVA)') for line in bullets)
+    assert bullets[0].startswith('• group: ') and bullets[1].startswith('• corner: ')
+    assert bullets[2].startswith('• Interaction: ')
+    assert ('P=' in source or 'P<' in source) == (mode != 'stars')
+    for note in notes.values():
+        assert note.font.weight == 700
+    assert notes['analysis-summary'].font.size == 16
+    assert notes['analysis-heading'].yshift > notes['analysis-summary'].yshift > notes['sample-size'].yshift
+    fig.update_layout(title_text='Renamed corner comparison')
+    fit_figure(fig, 480, 650)
+    assert plain_text(notes['analysis-heading'].text).replace('\n', ' ') == 'Renamed corner comparison'
+
+
+@pytest.mark.parametrize('width,height', [(480, 650), (900, 540), (1000, 900)])
+def test_significance_brackets_have_fixed_pixel_caps_and_centered_large_stars(tables, width, height):
+    data = tables['corner_summary'].with_columns(
+        pl.when(pl.col('group') == 'ko').then(pl.col('time_s') + 1000).otherwise(pl.col('time_s')).alias('time_s'))
+    fig = result_for({'table': 'corner_summary', 'value': 'time_s', 'by': 'corner'}, {'corner_summary': data})['figure']
+    fit_figure(fig, width, height)
+    stars = [n for n in fig.layout.annotations if n.name == 'stat' and set(n.text) == {'*'}]
+    assert stars and all(n.font.size == 18 and n.xanchor == 'center' for n in stars)
+    plot_height = max(45, height - fig.layout.margin.t - fig.layout.margin.b)
+    caps = [s for s in fig.layout.shapes if s.name == 'stat-bracket' and s.x0 == s.x1]
+    assert caps and all(abs(s.y1 - s.y0) * plot_height == pytest.approx(7) for s in caps)
 
 
 def test_resizing_reflows_title_footer_and_preserves_source_and_dimensions(tables):
@@ -72,12 +110,12 @@ def test_resizing_reflows_title_footer_and_preserves_source_and_dimensions(table
     assert fig.layout.title.text.count('<br>') < narrow.count('<br>')
     assert list(fig.data[0].y) == before
     # fitting does not replace the user's figure dimensions
-    assert fig.layout.width is None and fig.layout.height == 540
+    assert fig.layout.width is None and fig.layout.height >= 540
     fig.update_layout(width=700, height=450)
     fit_figure(fig)
     assert (fig.layout.width, fig.layout.height) == (700, 450)
-    offsets = [n.yshift for n in fig.layout.annotations if n.name in ('sample-size', 'analysis-summary')]
-    assert offsets[1] < offsets[0]
+    offsets = {n.name: n.yshift for n in fig.layout.annotations if n.name in ('sample-size', 'analysis-summary', 'analysis-heading')}
+    assert offsets['sample-size'] < offsets['analysis-summary'] < offsets['analysis-heading']
     bottommost = max(-n.yshift + 13 * (n.text.count('<br>') + 1) for n in fig.layout.annotations if n.name in ('sample-size', 'analysis-summary'))
     assert fig.layout.margin.b > bottommost
     snapshot = fig.to_plotly_json()
@@ -154,3 +192,38 @@ def test_layout_callback_keeps_plot_responsive_without_replacing_data(tables):
     plot.figure = go.Figure()
     fit_plot(plot, 500, 600)
     assert plot.updates == 1
+
+
+@pytest.mark.parametrize('mode,expected', [('p', 'P='), ('stars', 'ns'), ('both', 'P=')])
+def test_statistical_mode_changes_all_labels_and_fonts_are_readable(tables, mode, expected):
+    fig = result_for({'table': 'mouse_summary', 'value': 'visits_n'}, tables, significance=mode)['figure']
+    footer = next(a for a in fig.layout.annotations if a.name == 'analysis-summary')
+    assert expected in footer.text
+    if mode == 'stars': assert 'P=' not in footer.text
+    assert '&#x27;' not in footer.text
+    assert fig.layout.font.weight == 700
+    assert fig.layout.legend.font.weight == 700
+    assert fig.layout.xaxis.tickfont.weight == 700
+    assert fig.layout.yaxis.title.font.weight == 700
+    assert all(a.font.weight == 700 for a in fig.layout.annotations)
+    assert footer.font.size >= 14
+
+
+def test_annotation_editor_text_does_not_expose_html():
+    from intellicage.graph_layout import plain_text, plot_text
+    text = "Group 2 vs Default: P=0.0599 · Welch&#x27;s t test<br>mean ± SEM"
+    plain = plain_text(text)
+    assert plain == "Group 2 vs Default: P=0.0599 · Welch's t test\nmean ± SEM"
+    assert '&#x27;' not in plot_text(plain)
+    assert '<br>' in plot_text(plain)
+
+
+def test_day_night_comparisons_are_below_axes_with_unambiguous_headings(tables):
+    a = {'table': 'activity_periods', 'value': 'visits_n', 'by': 'day', 'plot': 'period_timecourse'}
+    fig = result_for(a, tables)['figure']
+    labels = [note for note in fig.layout.annotations if note.name == 'stat']
+    headings = [note.text for note in fig.layout.annotations if note.name == 'stat-heading']
+    assert all(note.yref == 'paper' and note.y == 0 and note.yshift < 0 for note in labels)
+    assert all('day/night' not in note.text and 'control' not in note.text for note in labels)
+    assert any('vs ko' in text for text in headings)
+    assert any('control:' in text for text in headings)

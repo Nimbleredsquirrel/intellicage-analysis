@@ -1,7 +1,7 @@
 from nicegui import ui
 
 from .period_controls import PeriodControls
-from .statistics_controls import statistics_controls, statistics_help
+from .statistics_controls import statistics_controls
 
 
 
@@ -9,6 +9,7 @@ class DashboardSettings:
     def __init__(self, board):
         self.board = board
         self.statistics, self.periods, self.local = {}, {}, {}
+        self.local_areas = {}
         self.area = ui.column().classes('w-full gap-2')
 
     async def apply(self, changes):
@@ -30,11 +31,10 @@ class DashboardSettings:
         with self.area:
             ui.label('statistics · all groups of graphs').classes('text-sm font-medium')
             with ui.row().classes('dashboard-filters w-full items-end gap-3 p-3 rounded-lg'):
-                self.statistics = statistics_controls(settings)
+                self.statistics = statistics_controls(settings, self.board.owner.apply_statistics)
                 async def apply_statistics():
                     await self.apply({key: field.value for key, field in self.statistics.items()})
                 ui.button('apply statistics', on_click=apply_statistics).classes('dashboard-apply').mark('dashboard-statistics-apply')
-            statistics_help()
 
     def group(self, project, key, analyses):
         tables = {a['table'] for a in analyses}
@@ -45,10 +45,10 @@ class DashboardSettings:
             self.periods[key] = editor
         fields = {}
         if not tables.intersection({'latency', 'learning_by_day', 'gate_sessions', 'gate_hourly'}): return
-        with ui.row().classes('dashboard-filters w-full items-end gap-3 p-3 rounded-lg'):
+        with ui.row().classes('dashboard-filters w-full items-end gap-3 p-3 rounded-lg') as area:
+            self.local_areas[key] = area
             if 'latency' in tables:
                 fields['latency_window_min'] = ui.number('observation window · minutes', value=settings['latency_window_min'], min=.1).props('outlined dense stack-label').classes('w-60 dashboard-selector')
-                ui.label('Empty means the full phase.').classes('muted')
             if 'learning_by_day' in tables:
                 fields['min_day_hours'] = ui.number('minimum recorded hours per day', value=settings['min_day_hours'], min=.1, max=24).props('outlined dense stack-label').classes('w-64 dashboard-selector')
             if tables.intersection({'gate_sessions', 'gate_hourly'}):

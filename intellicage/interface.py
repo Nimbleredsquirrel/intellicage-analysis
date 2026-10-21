@@ -20,10 +20,10 @@ from .catalogue import analysis_name
 from .board import GraphBoard
 from .graph_editor import draw_editor
 from .period_controls import PeriodControls
-from .statistics_controls import statistics_controls, statistics_help
+from .statistics_controls import statistics_controls
 from .table_view import TableChoice, TablePreview
 from .metadata import METADATA_FILE, group_hint, validate_labels
-from .plots import PLOT_CONFIG, colors_for
+from .plots import PNG_SCALE, PLOT_CONFIG, colors_for
 from .project import MAX_FILES, MAX_UPLOAD, Project, discover, safe_name, unpack
 from .prism import analysis_csv
 from .selection import select_data
@@ -190,7 +190,7 @@ h1,h2{letter-spacing:-.025em}.plotly-graph-div{border-radius:12px}.muted{color:#
                     ui.separator().classes('my-2')
                     self.sources = ui.column().classes('w-full gap-2 break-words').mark('exports-checks')
         self.heading = ui.label(APP_NAME).classes('text-3xl font-bold')
-        self.summary = ui.label('Load your exports to begin.').classes('muted')
+        self.summary = ui.label('').classes('muted')
         with ui.tabs(value='graphs', on_change=self.change_workspace).classes('w-full').props('align=left no-caps').mark('workspace-tabs') as self.workspace_tabs:
             ui.tab('graphs', label='graphs', icon='bar_chart')
             self.page_tab = ui.tab('page', label='dashboard', icon='dashboard')
@@ -210,10 +210,9 @@ h1,h2{letter-spacing:-.025em}.plotly-graph-div{border-radius:12px}.muted{color:#
                 self.board = GraphBoard(self)
             with ui.tab_panel('tables').classes('w-full'):
                 ui.label('tables').classes('text-lg font-bold')
-                ui.label('Intermediate tables for the current groups, phase and mice.').classes('muted')
                 self.table_select = TableChoice(self.show_table)
                 self.table_content = ui.column().classes('w-full min-w-0').mark('table-preview')
-        self.task_controls = [self.new_button, self.save_button, self.export_button, self.section, self.graph_select, self.analysis_view]
+        self.task_controls = [self.new_button, self.save_button, self.export_button, self.board.pdf_button, self.section, self.graph_select, self.analysis_view]
         self.task_controls.extend(self.board.filters.controls)
         self.task_controls.extend(button for button in [self.folder_button, self.open_button, self.board.apply_button] if button is not None)
 
@@ -223,7 +222,6 @@ h1,h2{letter-spacing:-.025em}.plotly-graph-div{border-radius:12px}.muted{color:#
         self.folder_edit_buttons = []
         with self.folder_list:
             if not self.project:
-                ui.label('no folders added').classes('muted text-sm')
                 return
             for i, ds in enumerate(self.project.datasets):
                 with ui.column().classes('w-full gap-1 border rounded-lg p-2'):
@@ -254,9 +252,6 @@ h1,h2{letter-spacing:-.025em}.plotly-graph-div{border-radius:12px}.muted{color:#
                     ui.label(f'{ds.animals.height} mice · {ds.visits.height:,} visits').classes('muted')
                     for warning in ds.warnings:
                         ui.label(warning).classes('text-amber-900 text-sm')
-            gate = project.tables.get('gate_sessions')
-            if gate is not None:
-                ui.label(f'AnimalGate: {gate.filter(~pl.col("paired")).height} single-direction records. Keep all records or use paired records only in settings.').classes('muted')
         self.build_filters()
         self.build_calculations()
         self.board.prepare()
@@ -303,20 +298,17 @@ h1,h2{letter-spacing:-.025em}.plotly-graph-div{border-radius:12px}.muted{color:#
             with ui.column().classes('w-full gap-2') as self.first_visit_settings:
                 ui.label('first visits').classes('font-medium')
                 self.latency = ui.number('observation window · minutes', value=p.cfg['settings']['latency_window_min'], min=.1).props('outlined dense stack-label').classes('w-60 dashboard-selector').mark('first-visit-window')
-                ui.label('Leave empty for the full phase. Applies to latency and first visit duration.').classes('muted')
             with ui.column().classes('w-full gap-2') as self.learning_settings:
                 ui.label('learning').classes('font-medium')
                 self.min_day = ui.number('minimum recorded hours per day', value=p.cfg['settings']['min_day_hours'], min=.1, max=24).props('outlined dense stack-label').classes('w-64 dashboard-selector')
             with ui.column().classes('w-full gap-2') as self.gate_settings:
                 self.paired = ui.checkbox('only sessions with both in and out records', value=p.cfg['settings']['gate_complete_only'])
-                ui.label('This option applies to AnimalGate only. Keep only sessions with records for both directions: In and Out. Records are matched by mouse and session start time. Sessions missing either direction are excluded.').classes('muted')
             ui.label('statistics and appearance').classes('font-medium')
             with ui.row().classes('dashboard-filters w-full items-end p-3 gap-3 rounded-lg'):
-                self.statistics = statistics_controls(p.cfg['settings'])
+                self.statistics = statistics_controls(p.cfg['settings'], self.apply_statistics)
                 self.error, self.bar_style, self.test, self.repeated, self.adjust = (
                     self.statistics[key] for key in ('error', 'bar_style', 'test', 'repeated_test', 'padjust'))
                 ui.button('apply settings', on_click=self.recalculate).classes('dashboard-apply').mark('recalculate')
-            statistics_help()
 
     def add_window_range(self, name, rule=None):
         self.period_editor.add_range(name, rule)
@@ -341,8 +333,6 @@ h1,h2{letter-spacing:-.025em}.plotly-graph-div{border-radius:12px}.muted{color:#
                 box = ui.checkbox(str(mouse['animal']), value=mouse not in p.selection.get('exclude_mice', [])).classes('w-full shrink-0').mark(f'mouse-{len(self.mouse_checkboxes)}')
                 self.mouse_checkboxes[key] = box
                 box.on_value_change(lambda e, key=key: self.choose_mouse(key, e.value))
-            if not mice:
-                ui.label('No mice in the selected groups and phase.').classes('muted')
         self.mouse_caption()
 
     def mouse_caption(self):
@@ -381,6 +371,15 @@ h1,h2{letter-spacing:-.025em}.plotly-graph-div{border-radius:12px}.muted{color:#
         self.mouse_caption()
         self.render_version += 1
         return self.show_graph()
+
+    async def apply_statistics(self, changes):
+        project = self.project
+        if not project: return
+        with self.workspace_tabs.client:
+            async with self.render_lock:
+                if project is not self.project: return
+                updated = await self.task(project.update_statistics, changes)
+            if updated: await self.show_graph()
 
     async def recalculate(self):
         settings = {**self.period_editor.values(), 'gate_complete_only': self.paired.value,
@@ -530,7 +529,6 @@ h1,h2{letter-spacing:-.025em}.plotly-graph-div{border-radius:12px}.muted{color:#
                 return
             if not name:
                 self.graph_area.clear(); self.editor_area.clear(); self.details_area.clear()
-                with self.graph_area: ui.label('No graphs in this category for these exports.').classes('muted')
                 return
             result = await self.task(project.result, name, status='calculating the selected graph…')
             # an older calculation must not replace a newer view
@@ -540,7 +538,6 @@ h1,h2{letter-spacing:-.025em}.plotly-graph-div{border-radius:12px}.muted{color:#
     def draw_graph(self, project, name, result):
         self.graph_area.clear(); self.editor_area.clear(); self.details_area.clear()
         if result is None:
-            with self.graph_area: ui.label('No graph for this selection. Choose other mice, groups, or windows.').classes('muted')
             return
         figure = result['figure'].to_plotly_json()
         width, height = figure['layout'].pop('width', None), figure['layout'].pop('height', 540)
@@ -569,7 +566,6 @@ h1,h2{letter-spacing:-.025em}.plotly-graph-div{border-radius:12px}.muted{color:#
         with self.editor_area:
             draw_editor(self, project, name, result, window)
         with self.details_area:
-            for note in result['notes']: ui.label(note).classes('muted')
             # build table previews only when requested
             with ui.expansion('statistics & graph data', icon='table_chart').classes('w-full').mark('statistics') as statistics:
                 stats_content = ui.column().classes('w-full')
@@ -786,7 +782,10 @@ h1,h2{letter-spacing:-.025em}.plotly-graph-div{border-radius:12px}.muted{color:#
         if not self.project or not name: return
         def create():
             figure = self.project.result(name)['figure']
-            return figure.to_html(include_plotlyjs=True, config={**PLOT_CONFIG, 'responsive': False} if figure.layout.width else PLOT_CONFIG) if kind == 'html' else figure.to_image(format=kind, scale=1)
+            if kind == 'html':
+                config = {**PLOT_CONFIG, 'responsive': False} if figure.layout.width else PLOT_CONFIG
+                return figure.to_html(include_plotlyjs=True, config=config)
+            return figure.to_image(format=kind, scale=PNG_SCALE if kind == 'png' else 1)
         data = await self.task(create)
         if data: ui.download.content(data.encode() if isinstance(data, str) else data, f'{name}.{kind}')
 

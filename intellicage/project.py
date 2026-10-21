@@ -142,6 +142,27 @@ class Project:
         self.selection.setdefault('groups', self.groups)
         self.selection.setdefault('phases', self.phases[:1])
 
+    def update_statistics(self, changes):
+        allowed = {'error', 'bar_style', 'test', 'repeated_test', 'padjust', 'family_scope',
+                   'significance', 'show_ns', 'show_n', 'show_test_summary'}
+        if set(changes) - allowed: raise ValueError('Unknown statistics setting')
+        candidate = {**self.cfg['settings'], **changes}
+        validate_settings(candidate)
+        changed = {key for key in changes if changes[key] != self.cfg['settings'][key]}
+        if 'significance' in changed:
+            for name, result in self.cache.items():
+                generated = {i for i, note in enumerate(result['figure'].layout.annotations)
+                             if note.name in ('stat', 'analysis-summary')}
+                layout = self.styles.get(name, {}).get('layout', {})
+                for i in generated: layout.pop(f'annotations[{i}].text', None)
+        self.cfg['settings'] = candidate
+        if changed <= {'significance', 'show_ns', 'show_n', 'show_test_summary'}:
+            from .inference import annotate
+            definitions = {analysis_name(a): a for a in self.analyses}
+            for name, result in self.cache.items(): annotate(definitions[name], result, candidate)
+        else: self.cache = {}
+        return True
+
     def set_selection(self, selection):
         # validate before changing the active project
         for table in self.tables.values():

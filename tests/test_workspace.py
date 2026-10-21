@@ -23,6 +23,30 @@ def groups(plot):
 
 
 @pytest.mark.asyncio
+async def test_new_dashboard_card_fits_comparisons_and_keeps_manual_resize(config):
+    config['analyses'] = 'all'
+    pages = []
+    async def root():
+        page = Explorer(None, local=True, native=True)
+        pages.append(page)
+        await page.install(Project(config))
+    async with user_simulation(root) as user:
+        await user.open('/')
+        page = pages[0]
+        name = next(analysis_name(a) for a in page.project.analyses if a.get('plot') == 'period_timecourse')
+        with user.client:
+            page.board.add(name)
+            page.workspace_tabs.set_value('page')
+        await settled(page)
+        panel = page.board.panels[0]
+        margin = page.board.plots[name].figure['layout']['margin']
+        assert panel['height'] - 74 - margin['t'] - margin['b'] >= 239
+        user.find(marker=f'board-size-{name}').trigger('resize', {'width': 800, 'height': 700})
+        with user.client: await page.show_graph()
+        assert page.board.panels[0] == {'name': name, 'width': 800, 'height': 700}
+
+
+@pytest.mark.asyncio
 async def test_navigation_only_shows_day_night_settings_where_used(config):
     config['analyses'] = 'all'
     pages = []
@@ -419,7 +443,7 @@ async def test_single_graph_size_follows_filters_project_and_downloads(config, t
         with user.client:
             await page.download_graph('png')
             await page.download_graph('svg')
-        assert images == [(840, 420, {'format': 'png', 'scale': 1}), (840, 420, {'format': 'svg', 'scale': 1})]
+        assert images == [(840, 420, {'format': 'png', 'scale': 4}), (840, 420, {'format': 'svg', 'scale': 1})]
         with user.client: await page.install(Project.open(page.project.save(), tmp_path/'resized'))
         assert page.project.result(name)['figure'].layout.width == 840
         assert page.project.result(name)['figure'].layout.height == 420
@@ -741,3 +765,68 @@ async def test_apply_waits_for_background_graph_instead_of_losing_settings(confi
             await applying
         assert page.project.cfg['settings']['error'] == 'sd'
         assert page.error.value == 'sd'
+
+
+@pytest.mark.asyncio
+async def test_prism_mode_updates_immediately_and_annotation_editor_shows_plain_text(config):
+    pages = []
+    async def root():
+        page = Explorer(None, local=True, native=True)
+        pages.append(page)
+        await page.install(Project(config))
+    async with user_simulation(root) as user:
+        await user.open('/')
+        page = pages[0]
+        tables = page.project.tables
+        before = page.project.result(page.name)['stats']['test'].clone()
+        with user.client: page.statistics['significance'].set_value('p')
+        await settled(page)
+        assert page.project.cfg['settings']['significance'] == 'p'
+        assert any('P=' in note.text for note in page.project.result(page.name)['figure'].layout.annotations if note.name == 'analysis-summary')
+        with user.client: page.statistics['significance'].set_value('stars')
+        await settled(page)
+        assert page.project.cfg['settings']['significance'] == 'stars'
+        assert page.project.tables is tables
+        assert page.project.result(page.name)['stats']['test'].equals(before)
+        summary = next(n for n in page.project.result(page.name)['figure'].layout.annotations if n.name == 'analysis-summary')
+        assert 'ns' in summary.text and 'P=' not in summary.text
+        fields = [e for e in page.editor_area.descendants() if isinstance(e, ui.textarea) and e.props.get('label') == 'annotation']
+        assert fields
+        assert all('<br>' not in e.value and '&#x27;' not in e.value for e in fields)
+
+
+@pytest.mark.asyncio
+async def test_pdf_button_exports_current_card_geometry_and_applied_filters(config, monkeypatch):
+    from unittest.mock import AsyncMock
+    import intellicage.dashboard_report as report
+    pages, received = [], []
+    async def root():
+        page = Explorer(None, local=True, native=True)
+        pages.append(page)
+        await page.install(Project(config))
+    async with user_simulation(root) as user:
+        await user.open('/')
+        page = pages[0]
+        name = page.name
+        with user.client:
+            page.board.add(name)
+            page.workspace_tabs.set_value('page')
+        await settled(page)
+        geometry = {'width': 700, 'cards': [{'name': name, 'x': 0, 'y': 100, 'width': 700, 'height': 500,
+                    'plot': {'x': 13, 'y': 161, 'width': 674, 'height': 426}}], 'bands': []}
+        js = AsyncMock(return_value=geometry)
+        monkeypatch.setattr(ui, 'run_javascript', js)
+        def export(cfg, panels, figures, layout):
+            received.append((cfg, panels, figures, layout))
+            return b'%PDF-1.4\nreport'
+        monkeypatch.setattr(report, 'dashboard_pdf', export)
+        with user.client:
+            page.board.filters.groups.set_value(['ko'])
+            await page.board.download_pdf()
+        await asyncio.sleep(.02)
+        assert js.await_count == 1
+        assert received[0][0]['selection']['groups'] == ['control', 'ko']
+        assert len(received[0][0]['report_mice']) == 6
+        assert received[0][3] == geometry
+        assert list(received[0][2]) == [name]
+        assert user.download.http_responses[-1].content.startswith(b'%PDF-')

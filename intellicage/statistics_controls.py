@@ -12,16 +12,13 @@ OPTIONS = [
 ]
 
 
-def statistics_controls(settings):
+def statistics_controls(settings, on_apply=None):
     fields = {}
     for key, label, options in OPTIONS:
         fields[key] = ui.select(options, label=label, value=settings[key]).props(
             'outlined dense stack-label options-dense').classes('w-44 dashboard-selector')
     for key, label in [('show_n', 'show number of mice'), ('show_ns', 'show non-significant results'), ('show_test_summary', 'show test summary')]:
         fields[key] = ui.checkbox(label, value=settings[key])
+    if on_apply:
+        fields['significance'].on_value_change(lambda _: on_apply({key: field.value for key, field in fields.items()}))
     return fields
-
-
-def statistics_help():
-    ui.label('Stars use the full adjusted p-value: * ≤ 0.05, ** ≤ 0.01, *** ≤ 0.001, **** ≤ 0.0001; ns > 0.05. Numerical p-values are always exported.').classes('muted')
-    ui.label('Comparison families include pairwise tests in all configured graphs of the selected scope, separately for each phase. Dashboard cards do not change the family. Omnibus model tests are separate. 95% CI shows uncertainty in the mean; SD shows mouse-to-mouse spread.').classes('muted')

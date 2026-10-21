@@ -9,6 +9,7 @@ import polars as pl
 from .stats import fmt_p, mean_interval
 
 DEFAULT_COLORS = ['#2a78d6', '#eb6834', '#00cc96', '#ab63fa', '#ffa15a', '#19d3f3']
+PNG_SCALE = 4
 PLOT_CONFIG = {'editable': False, 'scrollZoom': False, 'displaylogo': False,
                'toImageButtonOptions': {'format': 'svg', 'filename': 'intellicage', 'width': None, 'height': None, 'scale': 1},
                'edits': {'legendPosition': False, 'legendText': False, 'titleText': False,
@@ -230,14 +231,16 @@ def gate_raster(sessions, phase_starts, groups, colors, *, title):
                         meta=_meta(group, 'sessions'), hovertemplate='%{text}<extra></extra>')
     fig.update_yaxes(categoryorder='array', categoryarray=labels[::-1])
     _finish(fig, title, 'Mouse', 'Time from phase start (h)')
-    fig.update_layout(height=max(440, 170 + len(labels) * 25))
+    fig.update_layout(height=max(540, 170 + len(labels) * 25))
+    from .graph_layout import KEY
+    fig.layout.meta[KEY]['base_height'] = fig.layout.height
     return fig
 
 
 def save(fig: go.Figure, out_html: Path, out_png: Path | None = None):
     fig.write_html(out_html, include_plotlyjs='directory', config=PLOT_CONFIG)
     if out_png is not None:
-        fig.write_image(out_png, width=fig.layout.width or 900, height=fig.layout.height or 540, scale=1)
+        fig.write_image(out_png, width=fig.layout.width or 900, height=fig.layout.height or 540, scale=PNG_SCALE)
 
 
 def paired_period_plot(pairs, groups, colors, *, title, ylabel, error='sem', ylim=None, show_n=True):
@@ -280,4 +283,6 @@ def paired_period_plot(pairs, groups, colors, *, title, ylabel, error='sem', yli
         fig.update_xaxes(tickmode='array', tickvals=ticks, ticktext=labels, row=row, col=col)
     _finish(fig, title, ylabel, ylim=ylim)
     fig.update_layout(height=max(540, rows * 360 + 150))
+    from .graph_layout import KEY
+    fig.layout.meta[KEY]['base_height'] = fig.layout.height
     return fig

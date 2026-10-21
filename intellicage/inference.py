@@ -20,7 +20,7 @@ def annotate(a, result, settings):
     from .graph_layout import KEY, fit_figure
 
     fig, stats = result['figure'], result['stats']
-    fig.layout.annotations = tuple(n for n in fig.layout.annotations if n.name not in ('stat', 'sample-size', 'analysis-summary'))
+    fig.layout.annotations = tuple(n for n in fig.layout.annotations if n.name not in ('stat', 'stat-heading', 'sample-size', 'analysis-heading', 'analysis-summary'))
     fig.layout.shapes = tuple(s for s in fig.layout.shapes if s.name != 'stat-bracket')
     groups = list(dict.fromkeys(t.meta['group'] for t in fig.data if isinstance(t.meta, dict) and t.meta.get('group')))
     comparisons = stats.get('posthoc', stats.get('test', pl.DataFrame()))
@@ -69,10 +69,9 @@ def annotate(a, result, settings):
                 levels = sorted(result['data'][by].unique())
                 position = (levels.index(x) + .5) / len(levels)
                 if 'period' in row:
-                    identity = ga + ' · day/night' if row['contrast'] == 'within mouse' else row['period']
-                    label = f'{identity}<br>{label}'
+                    identity = f"{ga}: {row['period']}" if row['contrast'] == 'within mouse' else f"{row['period']}: {ga} vs {gb}"
                 elif len(groups) > 2:
-                    label = f'{ga} vs {gb}<br>{label}'
+                    identity = f'{ga} vs {gb}'
         hover = f"{ga} vs {gb}" + (f" · {row['period']}" if 'period' in row else '')
         hover += f"<br>{row.get('test', '')}<br>raw {S.fmt_p(row.get('p'))}<br>adjusted {S.fmt_p(row.get('p_adj', row.get('p')))}"
         fig.add_annotation(name='stat', text=label, x=x, xref=xref, y=.95, yref=yref + ' domain',
@@ -80,8 +79,17 @@ def annotate(a, result, settings):
         marks.append({'index': len(fig.layout.annotations) - 1, 'text': label, 'xref': xref, 'yref': yref,
                       'x0': x0, 'x1': x1, 'position': position, 'order': len(marks),
                       'series': f"{ga}|{gb}|{row.get('period', '')}|{row.get('contrast', '')}",
+                      'placement': 'strip' if level is not None and not grouped and not paired and
+                          (a.get('plot') == 'period_timecourse' or a.get('table') in
+                           ('activity_hourly', 'activity_elapsed', 'activity_circadian', 'gate_hourly')) else 'plot',
+                      'heading': identity if 'period' in row and not paired else f'{ga} vs {gb}',
                       'bracket_span': (abs(x1 - x0) / (max(2, len(groups) * 3 - 1) if paired else
                           max(1, len(categories)) if grouped else max(1, len(groups)))) if x0 is not None else 0})
+    headings = []
+    for series in dict.fromkeys(m['series'] for m in marks if m['placement'] == 'strip'):
+        mark = next(m for m in marks if m['series'] == series)
+        fig.add_annotation(name='stat-heading', text=mark['heading'], showarrow=False)
+        headings.append({'index': len(fig.layout.annotations) - 1, 'series': series, 'text': mark['heading']})
     if settings.get('show_n', True) and 'sample_sizes' in stats:
         parts = []
         for group in stats['sample_sizes']['group'].unique(maintain_order=True):
@@ -89,27 +97,32 @@ def annotate(a, result, settings):
             count = str(counts.min()) if counts.min() == counts.max() else f'{counts.min()}–{counts.max()}'
             parts.append(f'{group}: n={count}')
         text = 'mice per point · ' + ' · '.join(parts)
-        if paired: text = 'complete mouse pairs · n is shown for each group and cycle'
+        if paired: text = 'paired mice · n per group and cycle'
         fig.add_annotation(name='sample-size', text=text, showarrow=False)
     if settings.get('show_test_summary', True):
         lines = []
         omnibus = stats.get('omnibus', pl.DataFrame())
         if omnibus.height:
-            test = omnibus['test'][0]
-            lines.append(test + ' · model P values')
-            lines.extend(f"{r['effect']}: {S.fmt_p(r['p'])}" for r in omnibus.to_dicts())
+            mode = settings.get('significance', 'stars')
+            for row in omnibus.to_dicts():
+                label = significance_label(row['p'], mode, settings.get('show_ns', True)).replace('<br>', ' · ')
+                if label:
+                    effect = 'Interaction' if ' * ' in row['effect'] else row['effect']
+                    lines.append(f"• {effect}: {label} ({row['test']})")
+            if mode == 'none': lines.append(omnibus['test'][0])
         elif comparisons.height:
             rows = [r for r in comparisons.to_dicts() if r.get('group_a') != 'all']
             if rows and not a.get('by'):
-                lines.extend(f"{r['group_a']} vs {r['group_b']}: {S.fmt_p(r.get('p_adj', r.get('p')))} · {r['test']}" for r in rows)
+                for r in rows:
+                    label = significance_label(r.get('p_adj', r.get('p')), settings.get('significance', 'stars'), settings.get('show_ns', True))
+                    if label: lines.append(f"• {r['group_a']} vs {r['group_b']}: {label.replace('<br>', ' · ')} ({r['test']})")
         if a.get('value') and a.get('plot') != 'latency':
             lines.append('mean ± ' + {'sem': 'SEM', 'sd': 'SD', 'ci95': '95% CI'}[a.get('error', settings['error'])])
-        if comparisons.height and a.get('by'):
-            methods = ', '.join(str(v) for v in comparisons['correction'].drop_nulls().unique()) if 'correction' in comparisons.columns else settings['padjust']
-            lines.append(f"pairwise: {methods} · family: {settings.get('family_scope', 'graph')} · hover labels for P values")
-        if lines: fig.add_annotation(name='analysis-summary', text='<br>'.join(lines), showarrow=False)
+        if lines:
+            fig.add_annotation(name='analysis-heading', text=fig.layout.title.text, showarrow=False)
+            fig.add_annotation(name='analysis-summary', text='<br>'.join(lines), showarrow=False)
     meta = dict(fig.layout.meta or {})
-    meta[KEY] = {**meta.get(KEY, {}), 'marks': marks}
+    meta[KEY] = {**meta.get(KEY, {}), 'marks': marks, 'strip_headings': headings}
     fig.update_layout(meta=meta, uirevision=analysis_name(a))
     fit_figure(fig)
 

@@ -6,11 +6,11 @@ from .plots import colors_for
 
 
 def draw_editor(owner, project, name, result, window):
-    from .graph_layout import KEY
+    from .graph_layout import KEY, plain_text, plot_text
     figure = result['figure']
     with ui.expansion('edit graph', icon='palette').classes('w-full bg-white rounded-xl'):
         with ui.row().classes('w-full'):
-            title = ui.input('title', value=(figure.layout.meta or {}).get(KEY, {}).get('title_source', figure.layout.title.text)).classes('grow').mark('chart-title')
+            title = ui.input('title', value=plain_text((figure.layout.meta or {}).get(KEY, {}).get('title_source', figure.layout.title.text))).classes('grow').mark('chart-title')
             xlabel = ui.input('x axis', value=figure.layout.xaxis.title.text or '').classes('grow')
             ylabel = ui.input('y axis', value=figure.layout.yaxis.title.text or '').classes('grow')
             legend = ui.switch('show legend', value=figure.layout.showlegend is not False)
@@ -20,7 +20,6 @@ def draw_editor(owner, project, name, result, window):
             await owner.show_graph()
         ui.button('apply titles', on_click=apply_titles).props('flat').mark('apply-titles')
         ui.label('positions and text').classes('font-medium')
-        ui.label('x: 0 left, 1 right. y: 0 bottom, 1 top. Legend positions may extend outside the plot.').classes('muted')
         layout = figure.layout
         values = {}
         fields = [('title.x', 'title · x', layout.title.x if layout.title.x is not None else .02, -1, 2),
@@ -72,11 +71,11 @@ def draw_editor(owner, project, name, result, window):
                     ui.button('apply', on_click=apply_group).props('flat dense').mark(f'apply-color-{group}')
         for index, annotation in enumerate(layout.annotations or []):
             with ui.row().classes('w-full items-end'):
-                text = ui.input('annotation', value=annotation.text).classes('grow')
+                text = ui.textarea('annotation', value=plain_text(annotation.text)).props('autogrow').classes('grow')
                 x = ui.number('annotation · x', value=annotation.x) if isinstance(annotation.x, (int, float)) else ui.input('annotation · x', value=annotation.x)
                 y = ui.number('annotation · y', value=annotation.y) if isinstance(annotation.y, (int, float)) else ui.input('annotation · y', value=annotation.y)
                 async def apply_annotation(index=index, text=text, x=x, y=y):
-                    project.edit_layout(name, {f'annotations[{index}].text': text.value, f'annotations[{index}].x': x.value, f'annotations[{index}].y': y.value})
+                    project.edit_layout(name, {f'annotations[{index}].text': plot_text(text.value), f'annotations[{index}].x': x.value, f'annotations[{index}].y': y.value})
                     await owner.show_graph()
                 ui.button('apply annotation', on_click=apply_annotation).props('flat dense')
         ui.label('resize').classes('font-medium')
