@@ -83,7 +83,7 @@ async def test_page_drag_resize_edit_save_and_live_selection(config, tmp_path):
         with user.client: page.workspace_tabs.set_value('page')
         await settled(page)
         assert set(page.board.plots) == {first, second}
-        assert page.board.sortable.handle == '.chart-drag-handle'
+        assert all(sortable.handle == '.chart-drag-handle' for sortable in page.board.sortables.values())
         for plot in page.board.plots.values():
             assert groups(plot) == {'control', 'ko'}
             assert plot.figure['layout']['autosize']
@@ -92,8 +92,8 @@ async def test_page_drag_resize_edit_save_and_live_selection(config, tmp_path):
         user.find(marker=f'board-size-{first}').trigger('resize', {'width': 720, 'height': 350})
         assert page.board.panels[0]['width'] == 720
         assert page.board.panels[0]['height'] == 350
-        container = page.board.container
-        user.find(marker='graph-board').trigger('sortend', {
+        container = next(iter(page.board.group_rows.values()))
+        user.find(marker='dashboard-row-1').trigger('sortend', {
             'item_id': page.board.cards[second].id, 'from_id': container.id, 'to_id': container.id,
             'old_index': 1, 'new_index': 0})
         assert [p['name'] for p in page.board.panels] == [second, first]
@@ -545,3 +545,109 @@ async def test_graphs_uses_dashboard_card_resize_without_changing_controls(confi
         await asyncio.sleep(.02)
         assert 'width:840px' in user.download.http_responses[-1].text
         assert 'height:420px' in user.download.http_responses[-1].text
+
+
+@pytest.mark.asyncio
+async def test_download_keeps_frame_size_and_editor_controls_all_layout_changes(config, monkeypatch):
+    import plotly.graph_objects as go
+    pages = []
+    async def root():
+        page = Explorer(None, local=True, native=True)
+        pages.append(page)
+        await page.install(Project(config))
+    async with user_simulation(root) as user:
+        await user.open('/')
+        page = pages[0]
+        name = page.name
+        frame = next(e for e in page.graph_area.descendants() if 'single-chart-window' in e.classes)
+        user.find(marker='graph-size').trigger('resize', {'width': 840, 'height': 420})
+        assert frame.style['width'] == '866px' and frame.style['height'] == '446px'
+        plot = next(e for e in page.graph_area.descendants() if isinstance(e, ui.plotly))
+        assert not plot.figure['config']['editable']
+        assert not any(plot.figure['config']['edits'].values())
+        monkeypatch.setattr(go.Figure, 'to_image', lambda *args, **kwargs: b'png')
+        with user.client: await page.download_graph('png')
+        assert frame is next(e for e in page.graph_area.descendants() if 'single-chart-window' in e.classes)
+        assert frame.style['width'] == '866px' and frame.style['height'] == '446px'
+        fields = {e.label: e for e in page.editor_area.descendants() if isinstance(e, ui.number)}
+        with user.client:
+            fields['title · x'].set_value(.5)
+            fields['title · y'].set_value(.98)
+            fields['title font · px'].set_value(24)
+            fields['legend · y'].set_value(-.4)
+        user.find(marker='apply-positions').click()
+        await settled(page)
+        layout = page.project.result(name)['figure'].layout
+        assert layout.title.x == .5 and layout.title.y == .98
+        assert layout.title.font.size == 24 and layout.legend.y == -.4
+        assert (layout.width, layout.height) == (840, 420)
+        with user.client:
+            ratio = next(e for e in page.editor_area.descendants() if isinstance(e, ui.input) and e.label == 'aspect ratio · width:height')
+            ratio.set_value('4:3')
+        user.find(marker='apply-ratio').click()
+        assert page.project.styles[name]['size'] == {'width': 840, 'height': 630}
+        with user.client: ratio.set_value('bad')
+        user.find(marker='apply-ratio').click()
+        assert user.notify.contains('positive width:height')
+        with user.client: ratio.set_value('1:0')
+        user.find(marker='apply-ratio').click()
+        assert page.project.styles[name]['size']['height'] == 630
+        user.find(kind=ui.button, content='reset graph edits').click()
+        await settled(page)
+        assert page.project.styles[name] == {'size': {'width': 840, 'height': 630}}
+
+
+@pytest.mark.asyncio
+async def test_dashboard_groups_graphs_and_exposes_common_and_specific_settings(config):
+    config['analyses'] = 'all'
+    pages = []
+    async def root():
+        page = Explorer(None, local=True, native=True)
+        pages.append(page)
+        await page.install(Project(config))
+    async with user_simulation(root) as user:
+        await user.open('/')
+        page = pages[0]
+        project, board = page.project, page.board
+        chosen = []
+        for table in ['mouse_summary', 'activity_periods', 'latency', 'learning_by_day', 'gate_sessions']:
+            analysis = next(a for a in project.analyses if a['table'] == table)
+            chosen.append(analysis_name(analysis))
+        with user.client:
+            for name in chosen: board.add(name)
+            page.workspace_tabs.set_value('page')
+        await settled(page)
+        assert len(board.group_rows) == 5
+        for name, card in board.cards.items():
+            analysis = next(a for a in project.analyses if analysis_name(a) == name)
+            key = (page.view_for(analysis), analysis.get('section', 'Analysis'))
+            assert card.parent_slot.parent is board.group_rows[key]
+        assert board.settings.area.id < board.container.id
+        assert len(board.settings.periods) == 1
+        periods = next(iter(board.settings.periods.values()))
+        first = periods.inputs[0]
+        with user.client:
+            first[1].set_value('10:00')
+            first[2].set_value('16:00')
+            periods.add_range(first[0], {'date_from': '2024-01-01', 'date_to': '2024-01-02', 'start': 540, 'end': 900})
+        with user.client: await board.settings.apply(periods.values())
+        assert project.cfg['settings']['period_windows'][0]['start'] == '10:00'
+        assert project.cfg['settings']['period_windows'][0]['ranges'][0]['start'] == '09:00'
+        assert page.window_inputs[0][1].value == '10:00'
+        fields = next(fields for fields in board.settings.local.values() if 'latency_window_min' in fields)
+        with user.client: fields['latency_window_min'].set_value(30)
+        with user.client: await board.settings.apply({'latency_window_min': fields['latency_window_min'].value})
+        assert project.cfg['settings']['latency_window_min'] == 30
+        assert page.latency.value == 30
+        with user.client: board.settings.statistics['test'].set_value('mann_whitney')
+        user.find(marker='dashboard-statistics-apply').click()
+        await settled(page)
+        assert project.cfg['settings']['test'] == 'mann_whitney'
+        assert page.test.value == 'mann_whitney'
+        name = chosen[0]
+        card = board.cards[name]
+        with user.client: board.resized(name, {'width': 700, 'height': 450})
+        assert card.style['width'] == '700px' and card.style['height'] == '450px'
+        with user.client: await page.show_graph()
+        with user.client: board.resized(name, {'width': 400, 'height': 400}, card)
+        assert board.cards[name].style['width'] == '700px'

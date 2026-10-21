@@ -7,6 +7,7 @@ from nicegui import ui
 from .plots import PLOT_CONFIG
 from .catalogue import analysis_name
 from .dashboard_filters import DashboardFilters
+from .dashboard_settings import DashboardSettings
 
 
 class GraphBoard:
@@ -38,8 +39,9 @@ class GraphBoard:
                     ui.button('cancel', on_click=self.picker.close).props('flat').mark('dashboard-cancel')
                     self.apply_button = ui.button('apply', on_click=self.apply_selection).mark('dashboard-apply')
 
-        self.container = ui.row().classes('w-full items-start gap-4').mark('graph-board')
-        self.sortable = self.container.make_sortable(handle='.chart-drag-handle', on_end=self.reordered)
+        self.settings = DashboardSettings(self)
+        self.container = ui.column().classes('w-full gap-6').mark('graph-board')
+        self.group_rows, self.sortables = {}, {}
         self.clear()
 
     @property
@@ -70,12 +72,15 @@ class GraphBoard:
         self.refresh_picker()
 
     def clear(self):
+        self.settings.periods, self.settings.local = {}, {}
         self.container.clear()
+        self.group_rows, self.sortables = {}, {}
         self.cards, self.plots, self.titles, self.badges = {}, {}, {}, {}
         if self.owner.project is not self.selection_project:
             self.picker.close()
             self.draft = None
         self.filters.sync()
+        self.settings.common(self.owner.project)
         self.update_count()
         self.refresh_picker()
         with self.container: ui.label('No graphs yet. Use “choose graphs” to build your dashboard.').classes('muted')
@@ -178,52 +183,75 @@ class GraphBoard:
         self.prepare()
         return self.owner.show_graph()
 
-    def reordered(self, _):
-        order = {card.id: index for index, card in enumerate(self.container.default_slot.children)}
-        self.panels.sort(key=lambda p: order.get(self.cards[p['name']].id, len(order)))
+    def reordered(self, key, _):
+        row = self.group_rows[key]
+        order = {card.id: index for index, card in enumerate(row.default_slot.children)}
+        names = {name for name, card in self.cards.items() if card.parent_slot.parent is row}
+        sorted_panels = iter(sorted((p for p in self.panels if p['name'] in names), key=lambda p: order[self.cards[p['name']].id]))
+        self.panels[:] = [next(sorted_panels) if p['name'] in names else p for p in self.panels]
 
-    def resized(self, name, size):
-        if not self.owner.project: return
+    def resized(self, name, size, source=None):
+        if not self.owner.project or (source is not None and self.cards.get(name) is not source): return
         panel = next((p for p in self.panels if p['name'] == name), None)
         if panel is None: return
         for key in ('width', 'height'):
             value = size.get(key)
             if isinstance(value, (int, float)) and math.isfinite(value) and value >= 300:
                 panel[key] = min(4000, round(value))
+        if card := self.cards.get(name): card.style(f'width:{panel["width"]}px;height:{panel["height"]}px')
 
     def render(self, project, results):
         self.container.clear()
+        self.group_rows, self.sortables = {}, {}
         self.cards, self.plots, self.titles, self.badges = {}, {}, {}, {}
         self.refresh_picker()
         if not self.panels:
             self.clear()
             return
+        self.settings.common(project)
+        self.settings.periods, self.settings.local = {}, {}
+        definitions = {analysis_name(a): a for a in project.analyses}
+        grouped = {}
+        for panel in self.panels:
+            analysis = definitions[panel['name']]
+            key = (self.owner.view_for(analysis), analysis.get('section', 'Analysis'))
+            grouped.setdefault(key, []).append(panel)
         with self.container:
-            for panel in self.panels:
-                name = panel['name']
-                result = results.get(name)
-                with ui.card().classes('chart-window p-3 gap-2').style(
-                    f'width:{panel["width"]}px;height:{panel["height"]}px').mark(f'chart-window-{name}') as card:
-                    self.cards[name] = card
-                    with ui.row().classes('w-full items-center no-wrap shrink-0 gap-1'):
-                        ui.icon('drag_indicator').classes('chart-drag-handle cursor-grab p-1').tooltip('drag to reorder')
-                        title = result['figure'].layout.title.text if result else name
-                        self.titles[name] = ui.label(title or name).classes('grow text-sm truncate')
-                        self.badges[name] = ui.badge('edited').props('outline')
-                        self.badges[name].set_visibility(self.is_edited(name))
-                        ui.button(icon='edit', on_click=lambda name=name: self.owner.open_board_graph(name)).props('flat round dense').tooltip('edit graph')
-                        ui.button(icon='download', on_click=lambda name=name: self.owner.download_graph('html', name)).props('flat round dense').tooltip('download HTML')
-                        ui.button(icon='close', on_click=lambda name=name: self.remove(name)).props('flat round dense').tooltip('remove graph')
-                    ui.element('q-resize-observer').props('debounce=250').on('resize', lambda e, name=name: self.resized(name, e.args), args=['width', 'height']).mark(f'board-size-{name}')
-                    if result is None:
-                        ui.label('Could not draw this graph.').classes('muted')
-                        continue
-                    figure = result['figure'].to_plotly_json()
-                    figure['layout'].pop('height', None)
-                    figure['layout'].pop('width', None)
-                    figure['layout']['autosize'] = True
-                    figure['config'] = {**PLOT_CONFIG, 'responsive': True}
-                    plot = ui.plotly(figure).classes('w-full grow min-h-0').style('height:100%;min-height:0').mark(f'board-plot-{name}')
-                    plot.on('plotly_relayout', lambda e, name=name: self.edited(project, name, 'layout', e.args))
-                    plot.on('plotly_restyle', lambda e, name=name: self.edited(project, name, 'traces', e.args))
-                    self.plots[name] = plot
+            for key, panels in grouped.items():
+                with ui.column().classes('w-full gap-3').mark('dashboard-section'):
+                    ui.label(f'{key[0]} · {key[1]}').classes('text-xl font-bold')
+                    self.settings.group(project, key, [definitions[p['name']] for p in panels])
+                    with ui.row().classes('w-full items-start gap-4') as row:
+                        self.group_rows[key] = row
+                        self.sortables[key] = row.make_sortable(handle='.chart-drag-handle', on_end=lambda e, key=key: self.reordered(key, e))
+                        row.mark(f'dashboard-row-{len(self.group_rows)}')
+                        for panel in panels: self.draw_card(project, panel, results)
+
+    def draw_card(self, project, panel, results):
+        name = panel['name']
+        result = results.get(name)
+        with ui.card().classes('chart-window p-3 gap-2').style(
+            f'width:{panel["width"]}px;height:{panel["height"]}px').mark(f'chart-window-{name}') as card:
+            self.cards[name] = card
+            with ui.row().classes('w-full items-center no-wrap shrink-0 gap-1'):
+                ui.icon('drag_indicator').classes('chart-drag-handle cursor-grab p-1').tooltip('drag to reorder')
+                title = result['figure'].layout.title.text if result else name
+                self.titles[name] = ui.label(title or name).classes('grow text-sm truncate')
+                self.badges[name] = ui.badge('edited').props('outline')
+                self.badges[name].set_visibility(self.is_edited(name))
+                ui.button(icon='edit', on_click=lambda name=name: self.owner.open_board_graph(name)).props('flat round dense').tooltip('edit graph')
+                ui.button(icon='download', on_click=lambda name=name: self.owner.download_graph('html', name)).props('flat round dense').tooltip('download HTML')
+                ui.button(icon='close', on_click=lambda name=name: self.remove(name)).props('flat round dense').tooltip('remove graph')
+            ui.element('q-resize-observer').props('debounce=250').on('resize', lambda e, name=name, card=card: self.resized(name, e.args, card), args=['width', 'height']).mark(f'board-size-{name}')
+            if result is None:
+                ui.label('Could not draw this graph.').classes('muted')
+                return
+            figure = result['figure'].to_plotly_json()
+            figure['layout'].pop('height', None)
+            figure['layout'].pop('width', None)
+            figure['layout']['autosize'] = True
+            figure['config'] = {**PLOT_CONFIG, 'responsive': True}
+            plot = ui.plotly(figure).classes('w-full grow min-h-0').style('height:100%;min-height:0').mark(f'board-plot-{name}')
+            plot.on('plotly_relayout', lambda e, name=name: self.edited(project, name, 'layout', e.args))
+            plot.on('plotly_restyle', lambda e, name=name: self.edited(project, name, 'traces', e.args))
+            self.plots[name] = plot

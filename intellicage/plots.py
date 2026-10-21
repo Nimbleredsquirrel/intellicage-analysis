@@ -9,10 +9,10 @@ import polars as pl
 from .stats import fmt_p
 
 DEFAULT_COLORS = ['#2a78d6', '#eb6834', '#00cc96', '#ab63fa', '#ffa15a', '#19d3f3']
-PLOT_CONFIG = {'editable': True, 'scrollZoom': False, 'displaylogo': False,
+PLOT_CONFIG = {'editable': False, 'scrollZoom': False, 'displaylogo': False,
                'toImageButtonOptions': {'format': 'svg', 'filename': 'intellicage', 'width': None, 'height': None, 'scale': 1},
-               'edits': {'legendPosition': True, 'legendText': True, 'titleText': True,
-                         'axisTitleText': True, 'annotationText': True, 'annotationPosition': True}}
+               'edits': {'legendPosition': False, 'legendText': False, 'titleText': False,
+                         'axisTitleText': False, 'annotationText': False, 'annotationPosition': False}}
 
 
 def colors_for(groups: list[str], custom: dict | None = None) -> dict[str, str]:

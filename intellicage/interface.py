@@ -18,13 +18,14 @@ import polars as pl
 
 from .catalogue import analysis_name
 from .board import GraphBoard
+from .graph_editor import draw_editor
+from .period_controls import PeriodControls
 from .table_view import TableChoice, TablePreview
 from .metadata import METADATA_FILE, group_hint, validate_labels
 from .plots import PLOT_CONFIG, colors_for
 from .project import MAX_FILES, MAX_UPLOAD, Project, discover, safe_name, unpack
 from .prism import analysis_csv
 from .selection import select_data
-from .timebins import period_windows
 
 ROOT = Path(__file__).resolve().parents[1]
 IMPORTS = {}
@@ -208,7 +209,7 @@ h1,h2{letter-spacing:-.025em}.plotly-graph-div{border-radius:12px}.muted{color:#
                 self.board = GraphBoard(self)
             with ui.tab_panel('tables').classes('w-full'):
                 ui.label('tables').classes('text-lg font-bold')
-                ui.label('Full intermediate tables for the current groups, phase and mice. Downloads include every selected row and column.').classes('muted')
+                ui.label('Intermediate tables for the current groups, phase and mice.').classes('muted')
                 self.table_select = TableChoice(self.show_table)
                 self.table_content = ui.column().classes('w-full min-w-0').mark('table-preview')
         self.task_controls = [self.new_button, self.save_button, self.export_button, self.section, self.graph_select, self.analysis_view]
@@ -294,67 +295,36 @@ h1,h2{letter-spacing:-.025em}.plotly-graph-div{border-radius:12px}.muted{color:#
         p = self.project
         self.calculations.clear()
         with self.calculations:
-            self.window_inputs, self.window_ranges, self.range_areas = [], {}, {}
-            with ui.column().classes('w-full gap-3') as self.window_settings:
-                ui.label('calculation settings').classes('text-lg font-bold')
-                ui.label(f'recorded dates: {min(ds.start.date() for ds in p.datasets)} — {max(ds.end.date() for ds in p.datasets)}').classes('muted')
-                windows = period_windows(p.cfg['settings'])
-                for i, w in enumerate(windows):
-                    name = w['name']
-                    label = {'Light': 'day', 'Dark': 'night'}.get(name, name)
-                    ui.label(label).classes('font-medium').mark(f'window-{i}')
-                    with ui.column().classes('w-full gap-2'):
-                        ui.label('default hours').classes('muted')
-                        with ui.row().classes('items-end gap-4'):
-                            start = ui.input('from', value=self.clock_text(w['start'])).props('type=time').classes('w-40 max-w-full')
-                            end = ui.input('until', value=self.clock_text(w['end'])).props('type=time').classes('w-40 max-w-full')
-                        self.window_inputs.append((name, start, end))
-                        self.window_ranges[name] = []
-                        self.range_areas[name] = ui.column().classes('w-full gap-2')
-                        for rule in w.get('ranges', []): self.add_window_range(name, rule)
-                        ui.button('add date range', icon='add', on_click=lambda name=name: self.add_window_range(name)).props('flat dense').mark(f'add-range-{i}')
-                ui.label('Dates include both endpoints and refer to the start of the window. Nights may end the next day. Default hours apply outside date ranges.').classes('muted')
-                self.partial = ui.checkbox('include incomplete first / last windows', value=p.cfg['settings']['include_partial_periods']).mark('partial-windows')
-                ui.label('Include windows cut short by the start or end of the recording. For example, if day is set to 08:00–20:00 but recording starts at 12:00, enabling this option includes that incomplete day in the comparison. Day and night must still form a pair.').classes('muted')
-                ui.button('apply day / night settings', on_click=self.recalculate).mark('apply-periods')
-            with ui.expansion('more analysis settings').classes('w-full'):
-                with ui.expansion('first visits').classes('w-full'):
-                    self.latency = ui.number('observation window · minutes', value=p.cfg['settings']['latency_window_min'], min=.1).mark('first-visit-window')
-                    ui.label('Leave empty for the full phase. Applies to latency and first visit duration.').classes('muted')
-                with ui.expansion('learning').classes('w-full'):
-                    self.min_day = ui.number('minimum recorded hours per day', value=p.cfg['settings']['min_day_hours'], min=.1, max=24)
-                with ui.expansion('animal gate').classes('w-full') as gate_settings:
-                    self.paired = ui.checkbox('only sessions with both in and out records', value=p.cfg['settings']['gate_complete_only'])
-                    ui.label('This option applies to AnimalGate only. Keep only sessions with records for both directions: In and Out. Records are matched by mouse and session start time. Sessions missing either direction are excluded.').classes('muted')
-                gate_settings.set_visibility('gate_sessions' in p.tables)
-                with ui.expansion('statistics and appearance').classes('w-full'):
-                    self.error = ui.select(['sem', 'sd'], label='error bars', value=p.cfg['settings']['error'])
-                    self.bar_style = ui.select(['bar', 'scatter'], label='summary style', value=p.cfg['settings']['bar_style'])
-                    self.test = ui.select(['welch', 'student', 'mann_whitney', 'auto'], label='group test', value=p.cfg['settings']['test'])
-                    self.repeated = ui.select(['mixed_anova', 'lmm'], label='repeated measures', value=p.cfg['settings']['repeated_test'])
-                    self.adjust = ui.select(['sidak', 'holm', 'bonferroni', 'fdr_bh'], label='multiple comparisons', value=p.cfg['settings']['padjust'])
-                ui.button('apply settings', on_click=self.recalculate).classes('w-full').mark('recalculate')
-
-    @staticmethod
-    def clock_text(minutes):
-        return f'{minutes // 60:02}:{minutes % 60:02}'
+            self.period_editor = PeriodControls(p, self.recalculate)
+            self.window_settings = self.period_editor.container
+            self.window_inputs, self.window_ranges, self.range_areas = self.period_editor.inputs, self.period_editor.ranges, self.period_editor.areas
+            self.partial = self.period_editor.partial
+            with ui.column().classes('w-full gap-2') as self.first_visit_settings:
+                ui.label('first visits').classes('font-medium')
+                self.latency = ui.number('observation window · minutes', value=p.cfg['settings']['latency_window_min'], min=.1).props('outlined dense stack-label').classes('w-60 dashboard-selector').mark('first-visit-window')
+                ui.label('Leave empty for the full phase. Applies to latency and first visit duration.').classes('muted')
+            with ui.column().classes('w-full gap-2') as self.learning_settings:
+                ui.label('learning').classes('font-medium')
+                self.min_day = ui.number('minimum recorded hours per day', value=p.cfg['settings']['min_day_hours'], min=.1, max=24).props('outlined dense stack-label').classes('w-64 dashboard-selector')
+            with ui.column().classes('w-full gap-2') as self.gate_settings:
+                self.paired = ui.checkbox('only sessions with both in and out records', value=p.cfg['settings']['gate_complete_only'])
+                ui.label('This option applies to AnimalGate only. Keep only sessions with records for both directions: In and Out. Records are matched by mouse and session start time. Sessions missing either direction are excluded.').classes('muted')
+            ui.label('statistics and appearance').classes('font-medium')
+            with ui.row().classes('dashboard-filters w-full items-end p-3 gap-3 rounded-lg'):
+                self.error = ui.select(['sem', 'sd'], label='error bars', value=p.cfg['settings']['error'])
+                self.bar_style = ui.select(['bar', 'scatter'], label='summary style', value=p.cfg['settings']['bar_style'])
+                self.test = ui.select(['welch', 'student', 'mann_whitney', 'auto'], label='group test', value=p.cfg['settings']['test'])
+                self.repeated = ui.select(['mixed_anova', 'lmm'], label='repeated measures', value=p.cfg['settings']['repeated_test'])
+                self.adjust = ui.select(['sidak', 'holm', 'bonferroni', 'fdr_bh'], label='multiple comparisons', value=p.cfg['settings']['padjust'])
+                for field in (self.error, self.bar_style, self.test, self.repeated, self.adjust):
+                    field.props('outlined dense stack-label options-dense').classes('w-44 dashboard-selector')
+                ui.button('apply settings', on_click=self.recalculate).classes('dashboard-apply').mark('recalculate')
 
     def add_window_range(self, name, rule=None):
-        rule = rule or {}
-        with self.range_areas[name]:
-            with ui.row().classes('w-full items-end border rounded-lg p-3 gap-4') as container:
-                row = {'container': container}
-                row['date_from'] = ui.input('from date', value=rule.get('date_from', '')).props('type=date').classes('w-44 max-w-full')
-                row['date_to'] = ui.input('through date', value=rule.get('date_to', '')).props('type=date').classes('w-44 max-w-full')
-                start, end = next((s, e) for n, s, e in self.window_inputs if n == name)
-                row['start'] = ui.input('from', value=self.clock_text(rule['start']) if rule else start.value).props('type=time').classes('w-40 max-w-full')
-                row['end'] = ui.input('until', value=self.clock_text(rule['end']) if rule else end.value).props('type=time').classes('w-40 max-w-full')
-                ui.button('remove range', icon='close', on_click=lambda: self.remove_window_range(name, row)).props('flat dense')
-        self.window_ranges[name].append(row)
+        self.period_editor.add_range(name, rule)
 
     def remove_window_range(self, name, row):
-        self.window_ranges[name].remove(row)
-        row['container'].delete()
+        self.period_editor.remove_range(name, row)
 
     def show_mice(self):
         p = self.project
@@ -483,6 +453,11 @@ h1,h2{letter-spacing:-.025em}.plotly-graph-div{border-radius:12px}.muted{color:#
 
     def update_windows_visibility(self):
         self.window_settings.set_visibility(self.analysis_view.value == 'day / night')
+        analysis = next((a for a in self.project.analyses if analysis_name(a) == self.name), {})
+        table = analysis.get('table')
+        self.first_visit_settings.set_visibility(table == 'latency')
+        self.learning_settings.set_visibility(table == 'learning_by_day')
+        self.gate_settings.set_visibility(table in ('gate_sessions', 'gate_hourly'))
 
     def choose_view(self):
         if not self.project or self.updating_choices: return
@@ -548,6 +523,7 @@ h1,h2{letter-spacing:-.025em}.plotly-graph-div{border-radius:12px}.muted{color:#
         async with self.render_lock:
             if version != self.render_version or not self.project or self.busy: return
             project, name = self.project, self.name
+            self.update_windows_visibility()
             if self.workspace_tabs.value == 'tables':
                 self.show_table()
                 return
@@ -596,39 +572,7 @@ h1,h2{letter-spacing:-.025em}.plotly-graph-div{border-radius:12px}.muted{color:#
                 ui.space()
                 ui.label(f'{result["data"].height} observations').classes('muted whitespace-nowrap')
         with self.editor_area:
-            with ui.expansion('edit this graph', icon='palette').classes('w-full bg-white rounded-xl'):
-                with ui.row().classes('w-full'):
-                    title = ui.input('title', value=result['figure'].layout.title.text).classes('grow').mark('chart-title')
-                    xlabel = ui.input('x axis', value=result['figure'].layout.xaxis.title.text or '').classes('grow')
-                    ylabel = ui.input('y axis', value=result['figure'].layout.yaxis.title.text or '').classes('grow')
-                    legend = ui.switch('show legend', value=result['figure'].layout.showlegend is not False)
-                async def apply_titles():
-                    project.edit_layout(name, {'title.text': title.value, 'xaxis.title.text': xlabel.value,
-                                                   'yaxis.title.text': ylabel.value, 'showlegend': legend.value})
-                    await self.show_graph()
-                ui.button('apply titles', on_click=apply_titles).props('flat').mark('apply-titles')
-                with ui.row().classes('w-full'):
-                    for group in project.selection['groups']:
-                        trace = next((t for t in result['figure'].data if isinstance(t.meta, dict) and t.meta.get('group') == group), None)
-                        if trace is None: continue
-                        with ui.column():
-                            label = ui.input(f'legend · {group}', value=(trace.name or group).removesuffix(f' · {trace.meta.get("period")}') if trace.meta.get('period') else trace.name or group)
-                            color = ui.color_input(f'color · {group}', value=colors_for(project.groups, project.cfg.get('colors'))[group])
-                            async def apply_group(group=group, label=label, color=color):
-                                fig = project.result(name)['figure']
-                                for i, t in enumerate(fig.data):
-                                    if isinstance(t.meta, dict) and t.meta.get('group') == group:
-                                        legend_name = f'{label.value} · {t.meta["period"]}' if t.meta.get('period') else label.value
-                                        patch = {'marker.color': color.value, 'name': legend_name}
-                                        if t.type == 'scatter': patch['line.color'] = color.value
-                                        if t.type == 'bar': patch['marker.line.color'] = color.value
-                                        project.edit_traces(name, [patch, [i]])
-                                await self.show_graph()
-                            ui.button('apply', on_click=apply_group).props('flat dense').mark(f'apply-color-{group}')
-                async def reset():
-                    project.styles.pop(name, None)
-                    await self.show_graph()
-                ui.button('reset graph edits', on_click=reset).props('flat dense')
+            draw_editor(self, project, name, result, window)
         with self.details_area:
             for note in result['notes']: ui.label(note).classes('muted')
             # build table previews only when requested
@@ -645,7 +589,9 @@ h1,h2{letter-spacing:-.025em}.plotly-graph-div{border-radius:12px}.muted{color:#
 
     def resize_graph(self, project, name, window, size):
         if project is not self.project or name != self.name or window.is_deleted: return
-        project.resize_graph(name, size)
+        if project.resize_graph(name, size):
+            saved = project.styles[name]['size']
+            window.style(f'width:{saved["width"] + 26}px;height:{saved["height"] + 26}px')
 
     @staticmethod
     def grid(table, name='table'):
