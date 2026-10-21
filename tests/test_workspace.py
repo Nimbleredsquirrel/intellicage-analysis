@@ -768,6 +768,45 @@ async def test_apply_waits_for_background_graph_instead_of_losing_settings(confi
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize('location', ['graphs', 'dashboard'])
+async def test_statistics_checkboxes_update_visible_graph_and_shared_controls_immediately(config, location):
+    pages = []
+    async def root():
+        page = Explorer(None, local=True, native=True)
+        pages.append(page)
+        await page.install(Project(config))
+    async with user_simulation(root) as user:
+        await user.open('/')
+        page = pages[0]
+        name, tables = page.name, page.project.tables
+        stats = page.project.result(name)['stats']['test'].clone()
+        if location == 'dashboard':
+            with user.client:
+                page.board.add(name)
+                page.workspace_tabs.set_value('page')
+            await settled(page)
+        for key, annotation, values in [('show_n', 'sample-size', [True, False]),
+                                        ('show_ns', 'stat', [False, True]),
+                                        ('show_test_summary', 'analysis-summary', [False, True])]:
+            for value in values:
+                controls = page.statistics if location == 'graphs' else page.board.settings.statistics
+                with user.client: controls[key].set_value(value)
+                await settled(page)
+                figure = (page.board.plots[name] if location == 'dashboard' else
+                          next(e for e in page.graph_area.descendants() if isinstance(e, ui.plotly))).figure
+                assert any(n.get('name') == annotation for n in figure['layout'].get('annotations', [])) is value
+                if key == 'show_n' and value:
+                    note = next(n for n in figure['layout']['annotations'] if n.get('name') == 'sample-size')
+                    assert 'control: n=3' in note['text'] and 'ko: n=3' in note['text']
+                assert page.project.cfg['settings'][key] is value
+                assert page.statistics[key].value is value
+                if page.board.settings.statistics:
+                    assert page.board.settings.statistics[key].value is value
+                assert page.project.tables is tables
+                assert page.project.result(name)['stats']['test'].equals(stats)
+
+
+@pytest.mark.asyncio
 async def test_prism_mode_updates_immediately_and_annotation_editor_shows_plain_text(config):
     pages = []
     async def root():

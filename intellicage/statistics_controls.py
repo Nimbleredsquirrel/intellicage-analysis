@@ -20,5 +20,6 @@ def statistics_controls(settings, on_apply=None):
     for key, label in [('show_n', 'show number of mice'), ('show_ns', 'show non-significant results'), ('show_test_summary', 'show test summary')]:
         fields[key] = ui.checkbox(label, value=settings[key])
     if on_apply:
-        fields['significance'].on_value_change(lambda _: on_apply({key: field.value for key, field in fields.items()}))
+        for key in ('significance', 'show_n', 'show_ns', 'show_test_summary'):
+            fields[key].on_value_change(lambda event, key=key: on_apply({key: event.value}))
     return fields

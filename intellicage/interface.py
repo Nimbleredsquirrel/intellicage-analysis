@@ -378,8 +378,15 @@ h1,h2{letter-spacing:-.025em}.plotly-graph-div{border-radius:12px}.muted{color:#
         with self.workspace_tabs.client:
             async with self.render_lock:
                 if project is not self.project: return
+                if all(project.cfg['settings'][key] == value for key, value in changes.items()): return
                 updated = await self.task(project.update_statistics, changes)
-            if updated: await self.show_graph()
+            if updated and self.project is project:
+                for controls in (self.statistics, self.board.settings.statistics):
+                    for key, value in changes.items():
+                        control = controls.get(key)
+                        if control is not None and not control.is_deleted and control.value != value:
+                            control.set_value(value)
+                await self.show_graph()
 
     async def recalculate(self):
         settings = {**self.period_editor.values(), 'gate_complete_only': self.paired.value,
