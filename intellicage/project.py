@@ -190,12 +190,17 @@ class Project:
         for trace in result['figure'].data:
             if patch := style.get('traces', {}).get(trace_key(trace)):
                 trace.update(patch)
-        from .graph_layout import fit_figure
+        from .graph_layout import fit_figure, style_comparisons
+        if 'comparisons' in style: style_comparisons(result['figure'], style['comparisons'])
         if style: fit_figure(result['figure'], patches=style.get('layout', {}))
         if result['figure'].layout.width is None:
             from .graph_layout import KEY
             result['figure'].layout.width = (result['figure'].layout.meta or {}).get(KEY, {}).get('default_width', 900)
         return result
+
+    def edit_comparisons(self, name, values):
+        from .graph_layout import comparison_settings
+        self.styles.setdefault(name, {})['comparisons'] = comparison_settings(values)
 
     def resize_graph(self, name, size):
         values = [size.get(key) for key in ('width', 'height')]

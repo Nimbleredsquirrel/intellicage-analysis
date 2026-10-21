@@ -34,6 +34,21 @@ def test_full_run_produces_report_without_changing_exports(tmp_path, config, dat
     assert (out / "prism_tables/mouse_summary_visits_n__subjects.csv").is_file()
 
 
+def test_batch_keeps_graph_comparison_appearance_and_all_numeric_results(config, tmp_path):
+    from intellicage.project import Project
+    name = 'mouse_summary_visits_n'
+    config['styles'] = {name: {'comparisons': {'display': 'none', 'font_size': 20, 'line_width': 5}}}
+    expected = Project(config).result(name)['stats']['test']['p_adj'].to_list()
+    path = tmp_path / 'comparison-style.yaml'
+    path.write_text(yaml.safe_dump(config))
+    out = run(path, only=[name])
+    figure = json.loads((out / 'figures/json' / f'{name}.json').read_text())
+    assert figure['layout']['meta']['intellicage_layout']['comparisons']['display'] == 'none'
+    assert all(n['visible'] is False for n in figure['layout']['annotations'] if n.get('name') == 'stat')
+    assert not any(s.get('name') == 'stat-bracket' for s in figure['layout'].get('shapes', []))
+    assert pl.read_csv(out / 'stats' / f'{name}__test.csv')['p_adj'].to_list() == pytest.approx(expected)
+
+
 def test_batch_filters_gate_groups_mice_and_columns(tmp_path, config, datasets):
     config["selection"] = {"groups": ["control"], "phases": ["phase 1"],
                            "exclude_mice": [{"group": "control", "lot": "lot 1", "animal": 1}]}

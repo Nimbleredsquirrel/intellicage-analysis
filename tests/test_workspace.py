@@ -768,6 +768,56 @@ async def test_apply_waits_for_background_graph_instead_of_losing_settings(confi
 
 
 @pytest.mark.asyncio
+async def test_many_comparisons_have_one_editor_and_graph_local_appearance(config):
+    import polars as pl
+    config['analyses'] = [{'table': 'activity_elapsed', 'value': 'visits_n', 'by': 'hour', 'title': 'Hourly visits'}]
+    pages = []
+    async def root():
+        project = Project(config)
+        project.tables['activity_elapsed'] = pl.DataFrame([
+            {'group': group, 'lot': lot, 'phase': 'phase 1', 'animal': animal, 'hour': hour,
+             'visits_n': float(animal + hour / 10 + animal * (hour % 3) / 100)}
+            for group, lot in [('control', 'lot 1'), ('ko', 'lot 2')]
+            for animal in [1, 2, 3] for hour in range(48)])
+        page = Explorer(None, local=True, native=True)
+        pages.append(page)
+        await page.install(project)
+    async with user_simulation(root) as user:
+        await user.open('/')
+        page = pages[0]
+        with user.client: page.analysis_view.set_value('hourly activity')
+        await settled(page)
+        name, tables = page.name, page.project.tables
+        before = page.project.result(name)['stats']['posthoc'].clone()
+        fig = page.project.result(name)['figure']
+        assert sum(n.name == 'stat' for n in fig.layout.annotations) == 48
+        fields = [e for e in page.editor_area.descendants() if isinstance(e, ui.textarea) and e.props.get('label') == 'annotation']
+        assert len(fields) == 2
+        assert not any(e.value == 'ns' for e in fields)
+        with user.client: user.find(marker='comparison-display').elements.pop().set_value('none')
+        user.find(marker='apply-comparisons').click()
+        await settled(page)
+        assert all(n.visible is False for n in page.project.result(name)['figure'].layout.annotations if n.name == 'stat')
+        assert page.project.cfg['settings']['show_ns'] is True
+        assert page.board.is_edited(name)
+        with user.client:
+            user.find(marker='comparison-display').elements.pop().set_value('compact')
+            user.find(marker='comparison-label-size').elements.pop().set_value(24)
+            user.find(marker='comparison-star-size').elements.pop().set_value(30)
+            user.find(marker='comparison-line-width').elements.pop().set_value(5)
+        user.find(marker='apply-comparisons').click()
+        await settled(page)
+        fig = page.project.result(name)['figure']
+        assert any(n.name == 'stat-heading' and n.font.size == 24 and 'all 48' in n.text for n in fig.layout.annotations)
+        assert page.project.tables is tables
+        assert page.project.result(name)['stats']['posthoc'].equals(before)
+        with user.client: user.find(marker='comparison-label-size').elements.pop().set_value(None)
+        user.find(marker='apply-comparisons').click()
+        await settled(page)
+        assert user.notify.contains('Invalid comparison size')
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize('location', ['graphs', 'dashboard'])
 async def test_statistics_checkboxes_update_visible_graph_and_shared_controls_immediately(config, location):
     pages = []

@@ -9,6 +9,30 @@ import numpy as np
 import plotly.graph_objects as go
 
 KEY = 'intellicage_layout'
+COMPARISON_DEFAULTS = {'display': 'compact', 'font_size': 14, 'star_size': 18, 'line_width': 3}
+
+
+def comparison_settings(values=None):
+    values = values or {}
+    if set(values) - COMPARISON_DEFAULTS.keys(): raise ValueError('Unknown comparison appearance setting')
+    result = {**COMPARISON_DEFAULTS, **values}
+    if result['display'] not in ('compact', 'all', 'significant', 'none'):
+        raise ValueError('Unknown comparison display')
+    for key, minimum, maximum in [('font_size', 6, 48), ('star_size', 6, 72), ('line_width', .5, 8)]:
+        value = result[key]
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or not minimum <= value <= maximum:
+            raise ValueError('Invalid comparison size')
+    return result
+
+
+def style_comparisons(fig, values):
+    meta = dict(fig.layout.meta or {})
+    meta[KEY] = {**meta.get(KEY, {}), 'comparisons': comparison_settings(values)}
+    fig.layout.meta = meta
+
+
+def _non_significant(mark):
+    return mark.get('non_significant', mark['text'].startswith('ns'))
 
 
 def plain_text(text):
@@ -62,6 +86,8 @@ def fit_figure(fig, width=None, height=None, patches=None):
     auto_height = height is None and fig.layout.width is None
     meta = dict(fig.layout.meta or {})
     state = dict(meta.get(KEY, {}))
+    comparisons = comparison_settings(state.get('comparisons'))
+    display = comparisons['display']
     width = float(width or fig.layout.width or state.get('default_width', 900))
     height = float(height or fig.layout.height or 540)
     font = 14
@@ -97,42 +123,51 @@ def fit_figure(fig, width=None, height=None, patches=None):
     axis_space = max(52, tick_lines * font * 1.2 + 30)
     legend_space = 0 if side_legend else legend_rows * (font * 1.5 + 7)
     marks = state.get('marks', [])
+    strip_count = sum(m.get('placement') == 'strip' for m in marks)
     strip_space = 0
     strip_dense = False
     for heading in state.get('strip_headings', []):
         selected = [m for m in marks if m.get('placement') == 'strip' and m['series'] == heading['series']]
         if not selected: continue
         span = max(100, width - left - right)
-        label_widths = {m['index']: max(map(len, m['text'].split('<br>'))) * font * .65 + 16 for m in selected}
+        label_widths = {m['index']: max(map(len, m['text'].split('<br>'))) *
+                        (comparisons['star_size'] if set(m['text']) == {'*'} else comparisons['font_size']) * .65 + 16 for m in selected}
         dense = sum(label_widths.values()) > span
-        all_ns = dense and all(m['text'] == 'ns' for m in selected)
-        heading_text = heading['text'] + (f' · ns for all {len(selected)} comparisons' if all_ns else '')
-        text = wrap_text(heading_text, span, font)
+        ns = [m for m in selected if _non_significant(m)]
+        summarize = display == 'compact' and strip_count > 8 and bool(ns)
+        summary = (f'ns for all {len(selected)} comparisons' if len(ns) == len(selected) else
+                   f'ns for {len(ns)} of {len(selected)} comparisons') if summarize else ''
+        heading_visible = display != 'none' and not (display == 'significant' and len(ns) == len(selected))
+        heading_text = heading['text'] + (f' · {summary}' if summary else '')
+        text = wrap_text(heading_text, span, comparisons['font_size'])
         note = fig.layout.annotations[heading['index']]
         values = {'text': text, 'x': 0, 'xref': 'paper', 'y': 0, 'yref': 'paper', 'xanchor': 'left',
                   'yanchor': 'top', 'yshift': -(axis_space + legend_space + strip_space + 12),
-                  'font.size': font, 'font.weight': 700}
+                  'font.size': comparisons['font_size'], 'font.weight': 700, 'visible': heading_visible}
         for key, value in values.items():
             if not _locked(patches, f"annotations[{heading['index']}].{key}"): note.update({key: value})
-        title_height_strip = (text.count('<br>') + 1) * 18
+        title_height_strip = (text.count('<br>') + 1) * comparisons['font_size'] * 1.35
         strip_dense = strip_dense or dense
         occupied, shown = [], set()
         # give significant labels room before adding ns labels
-        for mark in sorted(selected, key=lambda m: (m['text'].startswith('ns'), m['position'])):
+        for mark in sorted(selected, key=lambda m: (_non_significant(m), m['position'])):
+            if display == 'none' or (_non_significant(mark) and (summarize or display == 'significant')): continue
             half = label_widths[mark['index']] / 2
             interval = (mark['position'] * span - half, mark['position'] * span + half)
-            if not all_ns and (not dense or all(interval[0] > end or interval[1] < start for start, end in occupied)):
+            if display == 'all' or not dense or all(interval[0] > end or interval[1] < start for start, end in occupied):
                 shown.add(mark['index'])
                 occupied.append(interval)
         for mark in selected:
             label = fig.layout.annotations[mark['index']]
             values = {'text': mark['text'], 'visible': mark['index'] in shown, 'y': 0, 'yref': 'paper',
                 'yshift': -(axis_space + legend_space + strip_space + 12 + title_height_strip),
-                'xanchor': 'center', 'yanchor': 'top', 'font.size': font, 'font.weight': 700}
+                'xanchor': 'center', 'yanchor': 'top', 'font.size': comparisons['star_size'] if set(mark['text']) == {'*'} else comparisons['font_size'], 'font.weight': 700}
             for key, value in values.items():
                 if not _locked(patches, f"annotations[{mark['index']}].{key}"): label.update({key: value})
-        label_height = max((m['text'].count('<br>') + 1 for m in selected if m['index'] in shown), default=0) * 18
-        strip_space += title_height_strip + label_height + 12
+        label_height = max(((m['text'].count('<br>') + 1) *
+                            (comparisons['star_size'] if set(m['text']) == {'*'} else comparisons['font_size']) * 1.35
+                           for m in selected if m['index'] in shown), default=0)
+        if heading_visible: strip_space += title_height_strip + label_height + 12
     footer_space = strip_space
     footer_order = {'analysis-heading': 0, 'analysis-summary': 1, 'sample-size': 2}
     footers = sorted(((i, n) for i, n in enumerate(fig.layout.annotations) if n.name in footer_order),
@@ -194,14 +229,18 @@ def fit_figure(fig, width=None, height=None, patches=None):
         wrapped = wrap_text(source, max(90, pixels), axis.title.font.size or font)
         sources[name] = {'source': source, 'wrapped': wrapped}
         axis.title.text = wrapped
-    marks = [m for m in marks if m.get('placement') != 'strip']
+    plot_marks = [m for m in marks if m.get('placement') != 'strip']
+    for mark in plot_marks:
+        fig.layout.annotations[mark['index']].visible = display != 'none' and not (display == 'significant' and _non_significant(mark))
+    marks = [m for m in plot_marks if fig.layout.annotations[m['index']].visible]
     lanes = {}
     for mark in marks:
         ref = mark['yref']
         axis = fig.layout[_axis_name(mark['xref'])]
         domain = axis.domain or (0, 1)
         span = max(50, (width - left - right) * (domain[1] - domain[0]))
-        label_width = max(28, max(map(len, mark['text'].split('<br>'))) * font * .65)
+        mark_font = comparisons['star_size'] if set(mark['text']) == {'*'} else comparisons['font_size']
+        label_width = max(28, max(map(len, mark['text'].split('<br>'))) * mark_font * .65)
         half = max(label_width / span / 2, mark.get('bracket_span', 0) / 2)
         interval = (mark['position'] - half, mark['position'] + half)
         rows = lanes.setdefault(ref, [])
@@ -224,7 +263,10 @@ def fit_figure(fig, width=None, height=None, patches=None):
         dense = len({m['position'] for m in panel_marks}) > max(8, (width - left - right) / 35)
         dense_panels.append(dense)
         count = len(series) if dense else len(rows)
-        reserved = min(.7, (count * 36 + 16) / panel_height)
+        text_height = max((m['text'].count('<br>') + 1) *
+                          (comparisons['star_size'] if set(m['text']) == {'*'} else comparisons['font_size']) * 1.35
+                          for m in panel_marks)
+        reserved = min(.7, (count * max(36, text_height + 12) + 16) / panel_height)
         low, high = _data_limits(fig, ref)
         if axis.autorange is not False and not _locked(patches, _axis_name(ref) + '.range'):
             axis.autorangeoptions.include = low + (high - low) / (1 - reserved)
@@ -234,10 +276,10 @@ def fit_figure(fig, width=None, height=None, patches=None):
             note = fig.layout.annotations[mark['index']]
             lane = series.index(mark['series']) if dense else mark['lane']
             y = 1 - reserved + (lane + .5) * reserved / count
-            mark_font = 18 if set(mark['text']) == {'*'} else font
+            mark_font = comparisons['star_size'] if set(mark['text']) == {'*'} else comparisons['font_size']
             changes = {'y': y, 'yref': ref + ' domain', 'yshift': 4, 'yanchor': 'bottom', 'visible': True,
                        'xanchor': 'center', 'font.size': mark_font, 'font.weight': 700}
-            if dense:
+            if dense and display != 'all':
                 # every comparison remains available on hover
                 stride = max(1, math.ceil(sum(m['yref'] == ref for m in marks) * 40 / max(100, width - left - right)))
                 changes['text'] = mark['text']
@@ -252,7 +294,7 @@ def fit_figure(fig, width=None, height=None, patches=None):
                                        (mark['x0'], mark['x1'], y, y), (mark['x1'], mark['x1'], y, y - cap)]:
                     shapes.append(go.layout.Shape(name='stat-bracket', type='line', xref=mark['xref'],
                         yref=ref + ' domain', x0=x0, x1=x1, y0=y0, y1=y1,
-                        line={'color': '#000000', 'width': 3}, opacity=1, layer='above'))
+                        line={'color': '#000000', 'width': comparisons['line_width']}, opacity=1, layer='above'))
     fig.layout.shapes = tuple(shapes)
     state['axis_includes'] = includes
     state['dense'] = strip_dense or any(dense_panels)

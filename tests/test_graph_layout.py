@@ -7,7 +7,8 @@ import polars as pl
 import pytest
 
 from intellicage import plots as P
-from intellicage.graph_layout import KEY, _data_limits, fit_figure, fit_plot, plain_text, wrap_caption, wrap_text
+from intellicage.graph_layout import (KEY, _data_limits, comparison_settings, fit_figure, fit_plot,
+                                    plain_text, style_comparisons, wrap_caption, wrap_text)
 from intellicage.inference import compute_results
 from intellicage.pipeline import DEFAULT_SETTINGS
 from intellicage.project import Project
@@ -206,6 +207,9 @@ def test_dense_hourly_marks_keep_all_hover_results_without_text_collisions():
         assert all(f'hour: {hour}' in text and 'adjusted P' in text for hour, text in enumerate(trace.hovertext))
     assert fig.layout.meta[KEY]['dense']
     fit_figure(fig, 2400, 700)
+    assert all(n.visible is False for n in fig.layout.annotations if n.name == 'stat' and n.text == 'ns')
+    style_comparisons(fig, {'display': 'all'})
+    fit_figure(fig, 2400, 700)
     assert all(n.text != '·' and n.visible is True for n in fig.layout.annotations if n.name == 'stat')
 
 
@@ -223,11 +227,15 @@ def test_dense_ns_strip_is_one_summary_and_resizing_restores_labels():
     assert 'ns for all 168 comparisons' in plain_text(fig.layout.annotations[-1].text)
     assert all(n.visible is False for n in fig.layout.annotations if n.name == 'stat')
     assert all(n.hovertext for n in fig.layout.annotations if n.name == 'stat')
+    style_comparisons(fig, {'display': 'significant'})
+    fit_figure(fig, 1200, 600)
+    assert all(n.visible is False for n in fig.layout.annotations)
+    style_comparisons(fig, {'display': 'compact'})
     # mixed results keep significant labels and leave space between labels
     for index in (40, 42, 44): marks[index]['text'] = '**'
     fig.layout.meta[KEY]['marks'] = marks
     fit_figure(fig, 1200, 600)
-    assert 'all 168' not in fig.layout.annotations[-1].text
+    assert 'ns for 165 of 168 comparisons' in plain_text(fig.layout.annotations[-1].text)
     shown = [m for m in marks if fig.layout.annotations[m['index']].visible]
     span = 1200 - fig.layout.margin.l - fig.layout.margin.r
     positions = sorted(m['position'] * span for m in shown)
@@ -235,7 +243,57 @@ def test_dense_ns_strip_is_one_summary_and_resizing_restores_labels():
     assert all(b - a > 2 * 14 * .65 + 16 for a, b in zip(positions, positions[1:]))
     assert all(n.text != '·' for n in fig.layout.annotations)
     fit_figure(fig, 8000, 600)
+    assert all(n.visible is False for n in fig.layout.annotations if n.name == 'stat' and n.text == 'ns')
+    style_comparisons(fig, {'display': 'all'})
+    fit_figure(fig, 8000, 600)
     assert all(n.visible is True for n in fig.layout.annotations if n.name == 'stat')
+
+
+@pytest.mark.parametrize('values', [{'display': 'bad'}, {'extra': 1}, {'font_size': None},
+                                  {'font_size': True}, {'line_width': 0}, {'star_size': float('inf')}])
+def test_comparison_appearance_rejects_invalid_values(values):
+    with pytest.raises(ValueError): comparison_settings(values)
+
+
+def test_compact_view_counts_all_day_night_contrasts_before_summarizing_ns():
+    fig = go.Figure(go.Scatter(x=list(range(7)), y=[1] * 7))
+    marks, headings = [], []
+    for series in ['control day/night', 'KO day/night', 'day control/KO', 'night control/KO']:
+        for day in range(7):
+            index = len(fig.layout.annotations)
+            fig.add_annotation(name='stat', text='ns', x=day, xref='x', showarrow=False)
+            marks.append({'index': index, 'placement': 'strip', 'series': series, 'text': 'ns',
+                          'position': (day + .5) / 7, 'xref': 'x', 'yref': 'y'})
+    for series in dict.fromkeys(m['series'] for m in marks):
+        headings.append({'index': len(fig.layout.annotations), 'series': series, 'text': series})
+        fig.add_annotation(name='stat-heading', text=series, showarrow=False)
+    fig.layout.meta = {KEY: {'marks': marks, 'strip_headings': headings}}
+    fit_figure(fig, 1200, 700)
+    assert all(n.visible is False for n in fig.layout.annotations if n.name == 'stat')
+    assert sum('ns for all 7 comparisons' in plain_text(n.text) for n in fig.layout.annotations) == 4
+
+
+def test_comparison_display_and_appearance_do_not_change_tests_or_cached_figure(config, tmp_path):
+    project = Project(config)
+    from intellicage.catalogue import analysis_name
+    name = analysis_name(project.analyses[0])
+    original = project.result(name)
+    stats = original['stats']['test'].clone()
+    project.edit_comparisons(name, {'display': 'none', 'font_size': 22, 'line_width': 5})
+    hidden = project.result(name)['figure']
+    assert all(n.visible is False for n in hidden.layout.annotations if n.name == 'stat')
+    assert not any(s.name == 'stat-bracket' for s in hidden.layout.shapes)
+    assert project.result(name)['stats']['test'].equals(stats)
+    assert any(n.visible is not False for n in project.cache[name]['figure'].layout.annotations if n.name == 'stat')
+    project.edit_comparisons(name, {'display': 'significant'})
+    assert all(n.visible is False for n in project.result(name)['figure'].layout.annotations if n.name == 'stat')
+    project.edit_comparisons(name, {'display': 'all', 'font_size': 22, 'line_width': 5})
+    shown = project.result(name)['figure']
+    assert all(n.visible and n.font.size == 22 for n in shown.layout.annotations if n.name == 'stat')
+    assert all(s.line.width == 5 and s.line.color == '#000000' for s in shown.layout.shapes if s.name == 'stat-bracket')
+    restored = Project.open(project.save(), tmp_path / 'comparison-style')
+    assert restored.styles[name]['comparisons'] == project.styles[name]['comparisons']
+    assert restored.result(name)['stats']['test'].equals(stats)
 
 
 def test_wrapping_preserves_special_characters_and_respects_line_breaks():

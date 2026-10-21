@@ -78,6 +78,7 @@ def annotate(a, result, settings):
         fig.add_annotation(name='stat', text=label, x=x, xref=xref, y=.95, yref=yref + ' domain',
                            showarrow=False, hovertext=hover, align='center', font={'size': 12})
         marks.append({'index': len(fig.layout.annotations) - 1, 'text': label, 'xref': xref, 'yref': yref,
+                      'non_significant': row.get('p_adj', row.get('p')) > .05,
                       'x0': x0, 'x1': x1, 'position': position, 'order': len(marks),
                       'series': f"{ga}|{gb}|{row.get('period', '')}|{row.get('contrast', '')}",
                       'placement': 'strip' if level is not None and not grouped and not paired and

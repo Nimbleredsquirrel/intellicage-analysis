@@ -6,7 +6,7 @@ from .plots import colors_for
 
 
 def draw_editor(owner, project, name, result, window):
-    from .graph_layout import KEY, plain_text, plot_text
+    from .graph_layout import KEY, comparison_settings, plain_text, plot_text
     figure = result['figure']
     with ui.expansion('edit graph', icon='palette').classes('w-full bg-white rounded-xl'):
         with ui.row().classes('w-full'):
@@ -69,7 +69,27 @@ def draw_editor(owner, project, name, result, window):
                                 project.edit_traces(name, [patch, [i]])
                         await owner.show_graph()
                     ui.button('apply', on_click=apply_group).props('flat dense').mark(f'apply-color-{group}')
+        if any(n.name == 'stat' for n in layout.annotations or []):
+            with ui.expansion('statistical comparisons', icon='compare_arrows').classes('w-full').mark('comparison-editor'):
+                appearance = comparison_settings(project.styles.get(name, {}).get('comparisons'))
+                with ui.row().classes('w-full items-end'):
+                    display = ui.select({'compact': 'compact', 'all': 'all individual labels',
+                                         'significant': 'significant only', 'none': 'hidden'},
+                                        label='show comparisons', value=appearance['display']).props('outlined dense').mark('comparison-display')
+                    label_size = ui.number('label font · px', value=appearance['font_size'], min=6, max=48).mark('comparison-label-size')
+                    star_size = ui.number('star font · px', value=appearance['star_size'], min=6, max=72).mark('comparison-star-size')
+                    line_width = ui.number('bracket width · px', value=appearance['line_width'], min=.5, max=8, step=.5).mark('comparison-line-width')
+                async def apply_comparisons():
+                    try:
+                        project.edit_comparisons(name, {'display': display.value, 'font_size': label_size.value,
+                                                       'star_size': star_size.value, 'line_width': line_width.value})
+                    except ValueError as exc:
+                        ui.notify(str(exc), type='negative')
+                        return
+                    await owner.show_graph()
+                ui.button('apply comparisons', on_click=apply_comparisons).props('flat').mark('apply-comparisons')
         for index, annotation in enumerate(layout.annotations or []):
+            if annotation.name in ('stat', 'stat-heading') or annotation.visible is False: continue
             with ui.row().classes('w-full items-end'):
                 text = ui.textarea('annotation', value=plain_text(annotation.text)).props('autogrow').classes('grow')
                 x = ui.number('annotation · x', value=annotation.x) if isinstance(annotation.x, (int, float)) else ui.input('annotation · x', value=annotation.x)

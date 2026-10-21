@@ -88,7 +88,7 @@ class GraphBoard:
 
     def is_edited(self, name):
         style = self.owner.project.styles.get(name, {})
-        return bool(style.get('layout') or any(style.get('traces', {}).values()))
+        return bool(style.get('layout') or style.get('comparisons') or any(style.get('traces', {}).values()))
 
     def title(self, analysis):
         layout = self.owner.project.styles.get(analysis_name(analysis), {}).get('layout', {})

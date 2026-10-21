@@ -269,7 +269,9 @@ def _run_analysis(a, tables, groups, colors, settings, out, phase_starts, select
             for trace in res['figure'].data:
                 if patch := style.get('traces', {}).get(trace_key(trace)):
                     trace.update(patch)
-        from .graph_layout import fit_figure
+        from .graph_layout import fit_figure, style_comparisons
+        if comparison_style := (styles or {}).get(analysis_name(a), {}).get('comparisons'):
+            style_comparisons(res['figure'], comparison_style)
         fit_figure(res['figure'], patches=(styles or {}).get(analysis_name(a), {}).get('layout', {}))
         name = analysis_name(a) + (f'_{_slug(phase)}' if several else '')
         P.save(res['figure'], out / 'figures/html' / f'{name}.html',
