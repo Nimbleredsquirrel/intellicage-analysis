@@ -14,28 +14,68 @@ jobs:
           - os: windows-latest
             package: Windows
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
         with:
           python-version: '3.14'
       - run: pip install poetry==2.5.1
-      - run: poetry sync --only main,build --all-extras
-      - run: poetry run nicegui-pack --name "intellicage analysis" --onedir --windowed --noconfirm app.py
-      - name: check mac executable
-        if: runner.os == 'macOS'
-        run: '"dist/intellicage analysis/intellicage analysis" --help'
-      - name: check windows executable
-        if: runner.os == 'Windows'
+      - run: poetry sync --with dev,build --all-extras
+      - run: poetry run pytest --cov --cov-report=term-missing
+      - name: install a browser for export checks
+        shell: python
         run: |
-          & ".\dist\intellicage analysis\intellicage analysis.exe" --help
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          import os, subprocess
+          script = "import os; from pathlib import Path; import plotly.io as pio; root = Path(os.environ['RUNNER_TEMP']) / 'intellicage-chrome'; root.mkdir(exist_ok=True); print(pio.get_chrome(path=root))"
+          browser = subprocess.check_output(['poetry', 'run', 'python', '-c', script], text=True).strip()
+          with open(os.environ['GITHUB_ENV'], 'a', encoding='utf8') as output:
+              output.write(f'BROWSER_PATH={browser}\n')
+      - run: poetry run nicegui-pack --name "intellicage analysis" --onedir --windowed --clean --noconfirm app.py
       - name: archive mac app
         if: runner.os == 'macOS'
         run: ditto -c -k --sequesterRsrc --keepParent 'dist/intellicage analysis.app' 'dist/intellicage-analysis-${{ matrix.package }}.zip'
       - name: archive windows app
         if: runner.os == 'Windows'
         run: Compress-Archive -Path 'dist/intellicage analysis' -DestinationPath dist/intellicage-analysis-Windows.zip
+      - name: check the unpacked desktop app
+        shell: python
+        env:
+          PACKAGE: ${{ matrix.package }}
+        run: |
+          import json, os, subprocess, tempfile, zipfile
+          from pathlib import Path
+          archive = Path('dist') / f"intellicage-analysis-{os.environ['PACKAGE']}.zip"
+          results = Path(os.environ['RUNNER_TEMP']) / 'intellicage-check-results'
+          with tempfile.TemporaryDirectory(prefix='intellicage-check-') as temporary:
+              folder = Path(temporary) / 'проверка программы'
+              folder.mkdir()
+              if os.name == 'nt':
+                  with zipfile.ZipFile(archive) as packed:
+                      packed.extractall(folder)
+                  executable = folder / 'intellicage analysis' / 'intellicage analysis.exe'
+              else:
+                  subprocess.run(['ditto', '-x', '-k', str(archive.resolve()), str(folder)], check=True)
+                  executable = folder / 'intellicage analysis.app/Contents/MacOS/intellicage analysis'
+              environment = dict(os.environ)
+              for key in ('PYTHONPATH', 'PYTHONHOME', 'VIRTUAL_ENV'):
+                  environment.pop(key, None)
+              environment['PATH'] = str(Path(os.environ['SystemRoot']) / 'System32') if os.name == 'nt' else '/usr/bin:/bin:/usr/sbin:/sbin'
+              process = subprocess.run([str(executable), '--check-exports', str(results)],
+                                       cwd=folder, env=environment, timeout=240)
+              error = results / 'error.txt'
+              if error.exists():
+                  print(error.read_text(encoding='utf8'))
+              process.check_returncode()
+              assert json.loads((results / 'check.json').read_text()) == {'ok': True}
+              print('Desktop exports verified: PNG, SVG, dashboard PDF, CSV, TXT, XLSX; Welch, mixed ANOVA and LMM checked')
+      - name: save export check files
+        uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: diagnostics-${{ matrix.package }}
+          path: ${{ runner.temp }}/intellicage-check-results
+          if-no-files-found: ignore
       - uses: actions/upload-artifact@v7
         with:
           path: dist/intellicage-analysis-${{ matrix.package }}.zip

@@ -16,6 +16,7 @@ dependencies = [
     "nicegui>=3.18,<4",
     "pywebview>=6.2.1,<7",
     "kaleido>=1.1,<2",
+    "choreographer>=1.4,<2",
     "pillow>=13,<14",
 ]
 

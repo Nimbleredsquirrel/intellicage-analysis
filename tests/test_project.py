@@ -1,6 +1,7 @@
 import io
 import json
 import zipfile
+from pathlib import Path
 
 import polars as pl
 import pytest
@@ -44,6 +45,27 @@ def test_save_reopen_preserves_selection_inputs_and_graph_edits(project, tmp_pat
     assert_frame_equal(result['data'], original['data'])
     assert result['data'].height == 2
     assert restored.datasets[0].visits.equals(project.datasets[0].visits)
+
+
+def test_project_files_use_utf8_with_a_windows_default_encoding(config, tmp_path, monkeypatch):
+    read, write = Path.read_text, Path.write_text
+    def read_local(path, encoding=None, **kwargs):
+        return read(path, encoding=encoding or 'cp1252', **kwargs)
+    def write_local(path, content, encoding=None, **kwargs):
+        return write(path, content, encoding=encoding or 'cp1252', **kwargs)
+    monkeypatch.setattr(Path, 'read_text', read_local)
+    monkeypatch.setattr(Path, 'write_text', write_local)
+    config['run_name'] = 'Мыши · expérience'
+    config['analyses'] = config['analyses'][:1]
+    config['analyses'][0]['title'] = 'Визиты'
+    project = Project(config)
+    restored = Project.open(project.save(), tmp_path / 'проект с пробелами')
+    assert restored.cfg['run_name'] == config['run_name']
+    assert restored.result(analysis_name(restored.analyses[0]))['figure'].layout.title.text == 'Визиты'
+    with zipfile.ZipFile(io.BytesIO(restored.export())) as archive:
+        assert 'Мыши' in archive.read('config_used.yaml').decode('utf8')
+        info = json.loads(archive.read('run_info.json').decode('utf8'))
+        assert 'проект с пробелами' in info['datasets'][0]['path']
 
 
 def test_result_copies_figures_and_cache_is_invalidated(project):

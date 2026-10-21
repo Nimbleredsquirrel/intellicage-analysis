@@ -263,7 +263,7 @@ class Project:
     @classmethod
     def open(cls, data: bytes, destination: Path):
         unpack(data, destination)
-        manifest = json.loads((destination / 'project.json').read_text())
+        manifest = json.loads((destination / 'project.json').read_text(encoding='utf8'))
         if manifest.get('format') != 'intellicage-project' or manifest.get('version') != 1:
             raise ValueError('Unsupported project format')
         cfg = manifest['config']
@@ -306,8 +306,8 @@ class Project:
                     table.write_csv(root / 'stats' / f'{name}__{kind}.csv')
                 entries.append({'name': name, 'title': analysis['title'], 'notes': result['notes'], 'tests': result['tests']})
             _report(root, self.cfg.get('run_name', 'IntelliCage analysis'), entries, self.datasets, selected_tables)
-            (root / 'config_used.yaml').write_text(yaml.safe_dump(self.configuration(), allow_unicode=True, sort_keys=False))
-            (root / 'run_info.json').write_text(json.dumps(run_metadata(self.datasets, self.configuration()), ensure_ascii=False, indent=2))
+            (root / 'config_used.yaml').write_text(yaml.safe_dump(self.configuration(), allow_unicode=True, sort_keys=False), encoding='utf8')
+            (root / 'run_info.json').write_text(json.dumps(run_metadata(self.datasets, self.configuration()), ensure_ascii=False, indent=2), encoding='utf8')
             for path in sorted(root.rglob('*')):
                 if path.is_file():
                     archive_name = path.relative_to(root).as_posix()

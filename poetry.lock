@@ -4710,4 +4710,4 @@ export = []
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.12,<3.15"
-content-hash = "b8b4c6356ff25732da454f68fb44472cce6de6cca680d2946b56b90d2f286349"
+content-hash = "52036ce94c4d21762f7b8502fa60b528f52503a3f6af4301759bf5a076b0fb33"

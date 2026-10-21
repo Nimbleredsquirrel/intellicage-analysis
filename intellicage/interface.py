@@ -117,8 +117,9 @@ class Explorer:
             self.status.set_text(f'done · {perf_counter() - started:.1f} s')
             return result
         except Exception as exc:
+            from .desktop import error_message
             self.status.set_text('could not finish · see the error message')
-            ui.notify(str(exc), type='negative', close_button=True, timeout=10000)
+            ui.notify(error_message(exc), type='negative', close_button=True, timeout=10000)
             return None
         finally:
             self.busy = False
@@ -128,7 +129,7 @@ class Explorer:
 
     async def initial_load(self):
         def load():
-            cfg = yaml.safe_load(self.config.read_text())
+            cfg = yaml.safe_load(self.config.read_text(encoding='utf8'))
             self.defaults = {key: value for key, value in cfg.items() if key in ('settings', 'analyses', 'output_dir')}
             if not cfg.get('datasets'):
                 return None
@@ -159,7 +160,6 @@ h1,h2{letter-spacing:-.025em}.plotly-graph-div{border-radius:12px}.muted{color:#
             self.new_button = ui.button('new project', icon='note_add', on_click=self.new_project).props('flat').mark('new-project')
             self.open_button = ui.button('open project', icon='folder_open', on_click=self.native_project).props('flat').mark('open-project') if self.native else None
             self.save_button = ui.button('save project', icon='save', on_click=self.save_project).props('flat').mark('save-project')
-            self.export_button = ui.button('export all', icon='download', on_click=self.export_all).mark('export-all')
         self.status = ui.label('ready').classes('muted text-sm').mark('operation-status')
         self.progress = ui.linear_progress().props('indeterminate').classes('w-full')
         self.progress.set_visibility(False)
@@ -212,7 +212,7 @@ h1,h2{letter-spacing:-.025em}.plotly-graph-div{border-radius:12px}.muted{color:#
                 ui.label('tables').classes('text-lg font-bold')
                 self.table_select = TableChoice(self.show_table)
                 self.table_content = ui.column().classes('w-full min-w-0').mark('table-preview')
-        self.task_controls = [self.new_button, self.save_button, self.export_button, self.board.pdf_button, self.section, self.graph_select, self.analysis_view]
+        self.task_controls = [self.new_button, self.save_button, self.board.pdf_button, self.section, self.graph_select, self.analysis_view]
         self.task_controls.extend(self.board.filters.controls)
         self.task_controls.extend(button for button in [self.folder_button, self.open_button, self.board.apply_button] if button is not None)
 
@@ -768,12 +768,6 @@ h1,h2{letter-spacing:-.025em}.plotly-graph-div{border-radius:12px}.muted{color:#
         data = await self.task(self.project.save)
         if data: ui.download.content(data, 'intellicage.icage', 'application/zip')
 
-    async def export_all(self):
-        if not self.project: return
-        ui.notify('Preparing every graph, its data and statistics…', type='info')
-        data = await self.task(self.project.export)
-        if data: ui.download.content(data, 'intellicage-results.zip', 'application/zip')
-
     def download_prism(self, name, result):
         analysis = next(a for a in self.project.analyses if analysis_name(a) == name)
         table = analysis_csv(analysis, self.project.tables[analysis['table']],
@@ -812,7 +806,7 @@ def main(argv=None):
         app.native.settings['ALLOW_DOWNLOADS'] = True
     config = args.config if args.config.is_file() else None
     if config:
-        cfg = yaml.safe_load(config.read_text())
+        cfg = yaml.safe_load(config.read_text(encoding='utf8'))
         if not all((Path(d['path']).expanduser() if Path(d['path']).expanduser().is_absolute()
                     else config.parent / d['path']).is_dir() for d in cfg.get('datasets', [])):
             config = None

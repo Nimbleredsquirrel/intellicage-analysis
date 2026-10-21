@@ -266,9 +266,7 @@ async def test_upload_zip_project_and_empty_selection(config,tmp_path):
             await page.set_mice(False)
         assert page.project.result(page.name)['data'].is_empty()
         assert page.project.result(page.name)['notes']
-        with user.client: await page.export_all()
-        await asyncio.sleep(.1)
-        assert user.download.http_responses
+        await user.should_not_see(marker='export-all')
         with user.client:
             await page.load_pending()
             await page.add_folders([source])
@@ -297,9 +295,13 @@ async def test_initial_config_error_handling_busy_and_no_project(config,tmp_path
             page.busy=False
             assert await page.task(lambda: (_ for _ in ()).throw(ValueError('bad data'))) is None
         assert user.notify.contains('bad data')
+        from choreographer.errors import BrowserFailedError
+        with user.client:
+            assert await page.task(lambda: (_ for _ in ()).throw(BrowserFailedError('technical details'))) is None
+        assert user.notify.contains('Chrome could not start for image export')
         with user.client:
             page.project=None
-            await page.save_project();await page.export_all();await page.download_graph('html')
+            await page.save_project();await page.download_graph('html')
             await page.show_graph();page.choose_section()
 
 
