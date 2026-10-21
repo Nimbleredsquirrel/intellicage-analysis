@@ -79,7 +79,7 @@ async def test_page_drag_resize_edit_save_and_live_selection(config, tmp_path):
         user.find(marker='add-to-page').click()
         user.find(marker='add-to-page').click()
         assert len(page.board.panels) == 2
-        assert user.notify.contains('already on my page')
+        assert user.notify.contains('already on dashboard')
         with user.client: page.workspace_tabs.set_value('page')
         await settled(page)
         assert set(page.board.plots) == {first, second}
@@ -238,3 +238,71 @@ async def test_failed_calculations_clear_old_plots_and_allow_recovery(config, mo
         with user.client: await page.show_graph()
         assert name in page.board.plots
         assert not page.busy
+
+
+@pytest.mark.asyncio
+async def test_dashboard_picker_keeps_edits_when_graphs_are_removed(config, tmp_path):
+    pages = []
+    async def root():
+        page = Explorer(None, local=True, native=True)
+        pages.append(page)
+        await page.install(Project(config))
+    async with user_simulation(root) as user:
+        await user.open('/')
+        page = pages[0]
+        project, board = page.project, page.board
+        first, second = [analysis_name(a) for a in project.analyses[:2]]
+        project.styles[second] = {'layout': {}, 'traces': {'empty': {}}}
+        with user.client: page.workspace_tabs.set_value('page')
+        await settled(page)
+        assert page.page_tab.label == 'dashboard'
+        assert len(board.checkboxes) == len(project.analyses)
+        assert not board.is_edited(second)
+        user.find(marker=f'dashboard-choice-{first}').click()
+        await settled(page)
+        assert set(board.plots) == {first}
+        user.find(marker=f'board-size-{first}').trigger('resize', {'width': 680, 'height': 430})
+        user.find(marker=f'board-plot-{first}').trigger('plotly_relayout', {'title.text': 'renamed on dashboard'})
+        user.find(marker=f'board-plot-{first}').trigger('plotly_restyle', [{'name': 'my control', 'marker.color': '#123456'}, [0]])
+        assert board.checkboxes[first].text == 'renamed on dashboard'
+        assert board.badges[first].visible
+        assert board.titles[first].text == 'renamed on dashboard'
+        with user.client: board.edited_only.set_value(True)
+        assert set(board.checkboxes) == {first}
+        with user.client: board.search.set_value('nothing matches this')
+        assert not board.checkboxes
+        with user.client: board.search.set_value('renamed')
+        user.find(marker=f'dashboard-choice-{first}').click()
+        await settled(page)
+        assert not board.panels and not board.plots
+        assert board.checkboxes[first].value is False
+        board.edited(project, first, 'layout', {'title.text': 'stale event'})
+        assert board.is_edited(first)
+        user.find(marker=f'dashboard-choice-{first}').click()
+        await settled(page)
+        figure = board.plots[first].figure
+        assert figure['layout']['title']['text'] == 'renamed on dashboard'
+        assert figure['data'][0]['name'] == 'my control'
+        assert figure['data'][0]['marker']['color'] == '#123456'
+        # adding another graph keeps the existing layout
+        with user.client:
+            board.edited_only.set_value(False)
+            board.search.set_value('')
+        user.find(marker=f'board-size-{first}').trigger('resize', {'width': 680, 'height': 430})
+        user.find(marker=f'dashboard-choice-{second}').click()
+        await settled(page)
+        assert board.panels[0] == {'name': first, 'width': 680, 'height': 430}
+        with user.client: await page.install(Project.open(project.save(), tmp_path/'dashboard'))
+        board.edited(project, first, 'layout', {'title.text': 'old project event'})
+        assert board.is_edited(first)
+        assert board.checkboxes[first].text == 'renamed on dashboard'
+        assert board.checkboxes[first].value and board.checkboxes[second].value
+        assert board.plots[first].figure['data'][0]['marker']['color'] == '#123456'
+        with user.client:
+            page.project.styles.pop(first)
+            await page.show_graph()
+        assert not board.is_edited(first)
+        assert not board.badges[first].visible
+        assert board.checkboxes[first].text == page.project.analyses[0]['title']
+        with user.client: page.new_project()
+        assert not board.checkboxes

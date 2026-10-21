@@ -186,7 +186,7 @@ h1,h2{letter-spacing:-.025em}.plotly-graph-div{border-radius:12px}.muted{color:#
         self.sources = ui.column().classes('w-full gap-2')
         with ui.tabs(value='graphs', on_change=self.change_workspace).classes('w-full').props('align=left no-caps').mark('workspace-tabs') as self.workspace_tabs:
             ui.tab('graphs', label='graphs', icon='bar_chart')
-            self.page_tab = ui.tab('page', label='my page', icon='dashboard')
+            self.page_tab = ui.tab('page', label='dashboard', icon='dashboard')
             ui.tab('tables', label='tables', icon='table_chart')
         with ui.tab_panels(self.workspace_tabs, value='graphs', animated=False, keep_alive=False).classes('w-full bg-transparent'):
             with ui.tab_panel('graphs').classes('w-full gap-4'):
@@ -195,7 +195,7 @@ h1,h2{letter-spacing:-.025em}.plotly-graph-div{border-radius:12px}.muted{color:#
                 with ui.row().classes('w-full items-end gap-4'):
                     self.section = ui.select([], label='measurements', on_change=self.choose_section).classes('w-64').mark('section')
                     self.graph_select = ui.select({}, label='graph', with_input=True, on_change=self.choose_graph).classes('grow').mark('graph')
-                    self.add_graph_button = ui.button('add to my page', icon='add', on_click=lambda: self.board.add(self.name)).mark('add-to-page').disable()
+                    self.add_graph_button = ui.button('add to dashboard', icon='add', on_click=lambda: self.board.add(self.name)).mark('add-to-page').disable()
                 self.graph_area = ui.column().classes('w-full')
                 self.editor_area = ui.column().classes('w-full')
                 self.details_area = ui.column().classes('w-full')
@@ -546,7 +546,7 @@ h1,h2{letter-spacing:-.025em}.plotly-graph-div{border-radius:12px}.muted{color:#
             if self.workspace_tabs.value == 'page':
                 self.board.prepare()
                 names = [p['name'] for p in self.board.panels]
-                results = await self.task(lambda: {name: project.result(name) for name in names}, status='calculating the graphs on my page…')
+                results = await self.task(lambda: {name: project.result(name) for name in names}, status='calculating the graphs on dashboard…')
                 if version == self.render_version and project is self.project: self.board.render(project, results or {})
                 return
             if not name:
@@ -645,7 +645,7 @@ h1,h2{letter-spacing:-.025em}.plotly-graph-div{border-radius:12px}.muted{color:#
             area.clear()
         self.board.clear()
         self.add_graph_button.disable()
-        self.page_tab.set_label('my page')
+        self.page_tab.set_label('dashboard')
         self.table_select.set_options({}, value=None)
         self.workspace_tabs.set_value('graphs')
         self.section.set_options([], value=None)

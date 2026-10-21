@@ -73,13 +73,13 @@ def test_real_browser_edits_filters_and_saves_project(tmp_path, config, export_f
             mice_header.click()
             expect(mice_list).not_to_be_visible()
 
-            page.get_by_role('button', name='add to my page', exact=True).click()
+            page.get_by_role('button', name='add to dashboard', exact=True).click()
             graph_choice = page.get_by_label('graph', exact=True)
             graph_choice.fill('Visits: total duration')
             page.get_by_role('option', name='Visits: total duration', exact=True).click()
             page.wait_for_function('document.querySelector(".js-plotly-plot")?._fullLayout?.title?.text === "Visits: total duration"')
-            page.get_by_role('button', name='add to my page', exact=True).click()
-            page.get_by_role('tab').filter(has_text='my page').click()
+            page.get_by_role('button', name='add to dashboard', exact=True).click()
+            page.get_by_role('tab').filter(has_text='dashboard').click()
             windows = page.locator('.chart-window')
             expect(windows).to_have_count(2)
             first = windows.first
