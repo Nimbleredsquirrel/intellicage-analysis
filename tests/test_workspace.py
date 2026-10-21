@@ -678,8 +678,18 @@ async def test_dashboard_groups_graphs_and_exposes_common_and_specific_settings(
 
 
 @pytest.mark.asyncio
-async def test_inference_settings_are_shared_between_graphs_and_dashboard(config):
+@pytest.mark.parametrize('queued_apply', [False, True])
+async def test_inference_settings_are_shared_between_graphs_and_dashboard(config, monkeypatch, queued_apply):
     config['analyses'] = 'all'
+    started, release, applied = asyncio.Event(), asyncio.Event(), asyncio.Event()
+    recalculate = Explorer.recalculate
+    async def tracked_apply(page):
+        started.set()
+        await release.wait()
+        await recalculate(page)
+        applied.set()
+    monkeypatch.setattr(Explorer, 'recalculate', tracked_apply)
+    if not queued_apply: release.set()
     pages = []
     async def root():
         page = Explorer(None, local=True, native=True)
@@ -688,11 +698,20 @@ async def test_inference_settings_are_shared_between_graphs_and_dashboard(config
     async with user_simulation(root) as user:
         await user.open('/')
         page = pages[0]
+        await settled(page)
         with user.client:
             for key, value in {'error': 'ci95', 'significance': 'both', 'show_ns': True,
                                'show_n': False, 'family_scope': 'section'}.items():
                 page.statistics[key].set_value(value)
         user.find(marker='recalculate').click()
+        await asyncio.wait_for(started.wait(), timeout=10)
+        if queued_apply:
+            # idle does not mean the queued settings were applied
+            await settled(page)
+            assert not applied.is_set()
+            assert page.project.cfg['settings']['error'] == 'sem'
+            release.set()
+        await asyncio.wait_for(applied.wait(), timeout=10)
         await settled(page)
         settings = page.project.cfg['settings']
         assert settings['error'] == 'ci95'
