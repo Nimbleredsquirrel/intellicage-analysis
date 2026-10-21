@@ -388,9 +388,8 @@ async def test_single_graph_size_follows_filters_project_and_downloads(config, t
         source_title = next(e for e in page.sources.descendants() if isinstance(e, ui.label))
         selection_title = next(e for e in page.filters.descendants() if isinstance(e, ui.label))
         assert source_title.classes == selection_title.classes
-        assert page.table_select.props['stack-label']
-        assert page.table_select.props['menu-anchor'] == 'bottom left'
-        assert page.table_select.props['menu-self'] == 'top left'
+        assert isinstance(page.table_select.dialog, ui.dialog)
+        assert not page.table_select.dialog.value
         old_window = next(e for e in page.graph_area.descendants() if 'single-chart-window' in e.classes)
         user.find(marker='graph-size').trigger('resize', {'width': 840, 'height': 420})
         user.find(marker='graph-size').trigger('resize', {'width': 0, 'height': 0})

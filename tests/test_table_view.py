@@ -119,3 +119,70 @@ async def test_preview_head_tail_full_pagination_sort_schema_and_downloads():
         assert ZipFile(io.BytesIO(user.download.http_responses[2].content)).testzip() is None
         with user.client: await view.download('bad')
         assert user.notify.contains('Unknown table format')
+
+
+@pytest.mark.asyncio
+async def test_preview_height_tracks_visible_rows_without_a_fixed_minimum():
+    previews = []
+    def root():
+        for size in [0, 2, 100]:
+            table = pl.DataFrame({'mouse': range(size), 'notes': ['long text ' * 30] * size})
+            previews.append(TablePreview(table, f'mice-{size}'))
+    async with user_simulation(root) as user:
+        await user.open('/')
+        for preview, expected in zip(previews, [0, 2, 25]):
+            assert len(preview.grid.options['rowData']) == expected
+            assert preview.grid.options['domLayout'] == 'autoHeight'
+            assert preview.grid.style['height'] == 'auto'
+            assert preview.grid.style['min-height'] == '0'
+            viewport = preview.grid.parent_slot.parent
+            assert 'height' not in viewport.style
+            assert 'min-height' not in viewport.style
+            assert viewport.style['max-height'] == 'min(65vh, 620px)'
+            assert viewport.style['overflow'] == 'auto'
+            assert preview.grid.options['defaultColDef']['autoHeight']
+            assert preview.limit.props['behavior'] == 'dialog'
+            assert preview.sort.props['behavior'] == 'dialog'
+        preview = previews[-1]
+        with user.client:
+            preview.limit.set_value(100)
+            preview.mode.set_value('schema')
+        assert len(preview.grid.options['rowData']) == 2
+        assert preview.grid.options['domLayout'] == 'autoHeight'
+        assert preview.grid.style['height'] == 'auto'
+
+
+@pytest.mark.asyncio
+async def test_table_choice_uses_a_dialog_and_filters_without_changing_selection():
+    from intellicage.table_view import TableChoice
+    choices, changes = [], []
+    def root(): choices.append(TableChoice(lambda: changes.append(choices[0].value)))
+    async with user_simulation(root) as user:
+        await user.open('/')
+        choice = choices[0]
+        assert not choice.button.enabled
+        with user.client:
+            choice.set_options({'mouse_summary': 'mouse summary', 'activity_hourly': 'hourly activity'}, value='mouse_summary')
+        assert changes == ['mouse_summary']
+        assert choice.button.enabled
+        user.find(marker='table-choice').click()
+        assert choice.dialog.value
+        with user.client: choice.search.set_value('hourly')
+        assert choice.value == 'mouse_summary'
+        buttons = [e for e in choice.choices.descendants() if isinstance(e, ui.button)]
+        assert [b.text for b in buttons] == ['hourly activity']
+        user.find(marker='table-option-activity_hourly').click()
+        assert not choice.dialog.value
+        assert changes == ['mouse_summary', 'activity_hourly']
+        assert choice.button.text == 'hourly activity'
+        user.find(marker='table-choice').click()
+        assert choice.search.value == ''
+        with user.client: choice.search.set_value('no such table')
+        assert any(isinstance(e, ui.label) and e.text == 'No matching tables.' for e in choice.choices.descendants())
+        with user.client:
+            choice.dialog.close()
+            choice.set_value('activity_hourly')
+            with pytest.raises(ValueError, match='Unknown table'): choice.set_value('missing')
+            choice.set_options({})
+        assert choice.value is None and not choice.button.enabled
+        assert changes == ['mouse_summary', 'activity_hourly', None]

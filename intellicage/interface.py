@@ -18,7 +18,7 @@ import polars as pl
 
 from .catalogue import analysis_name
 from .board import GraphBoard
-from .table_view import TablePreview
+from .table_view import TableChoice, TablePreview
 from .metadata import METADATA_FILE, group_hint, validate_labels
 from .plots import PLOT_CONFIG, colors_for
 from .project import MAX_FILES, MAX_UPLOAD, Project, discover, safe_name, unpack
@@ -207,9 +207,7 @@ h1,h2{letter-spacing:-.025em}.plotly-graph-div{border-radius:12px}.muted{color:#
             with ui.tab_panel('tables').classes('w-full'):
                 ui.label('tables').classes('text-lg font-bold')
                 ui.label('Full intermediate tables for the current groups, phase and mice. Downloads include every selected row and column.').classes('muted')
-                self.table_select = ui.select({}, label='table', with_input=True, on_change=self.show_table).props(
-                    'outlined stack-label behavior=menu menu-anchor="bottom left" menu-self="top left" popup-content-style="max-height:280px" transition-show=none transition-hide=none'
-                ).classes('w-96 max-w-full shrink-0').mark('table-choice')
+                self.table_select = TableChoice(self.show_table)
                 self.table_content = ui.column().classes('w-full min-w-0').mark('table-preview')
         self.task_controls = [self.new_button, self.save_button, self.export_button, self.section, self.graph_select, self.analysis_view]
         self.task_controls.extend(button for button in [self.folder_button, self.open_button, self.board.apply_button] if button is not None)

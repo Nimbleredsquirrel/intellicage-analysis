@@ -107,11 +107,20 @@ def grid(table):
     for row, original in zip(rows, table.iter_rows(named=True)):
         for key, value in original.items():
             if isinstance(value, float) and not math.isfinite(value): row[key] = str(value)
-    return ui.aggrid({'columnDefs': columns,
-        'defaultColDef': {'width': 210, 'minWidth': 140, 'resizable': True, 'wrapHeaderText': True, 'sortable': False, 'filter': False,
-                         'autoHeaderHeight': True, 'wrapText': True, 'autoHeight': True},
-        'rowData': rows, 'tooltipShowDelay': 250,
-        'enableCellTextSelection': True, 'ensureDomOrder': True}, auto_size_columns=False).classes('w-full min-w-0').style('height: min(65vh, 620px); min-height: 260px')
+    ui.add_css("""
+.table-preview-grid.ag-layout-auto-height .ag-center-cols-viewport,
+.table-preview-grid.ag-layout-auto-height .ag-center-cols-container,
+.table-preview-grid .ag-layout-auto-height .ag-center-cols-viewport,
+.table-preview-grid .ag-layout-auto-height .ag-center-cols-container {min-height:0!important}
+""")
+    with ui.element('div').classes('w-full min-w-0').style(
+            'max-height:min(65vh, 620px);overflow:auto').mark('preview-viewport'):
+        return ui.aggrid({'columnDefs': columns, 'domLayout': 'autoHeight',
+            'defaultColDef': {'width': 210, 'minWidth': 140, 'resizable': True, 'wrapHeaderText': True, 'sortable': False, 'filter': False,
+                             'autoHeaderHeight': True, 'wrapText': True, 'autoHeight': True},
+            'rowData': rows, 'tooltipShowDelay': 250,
+            'enableCellTextSelection': True, 'ensureDomOrder': True}, auto_size_columns=False).classes(
+                'w-full min-w-0 table-preview-grid').style('height:auto;min-height:0;flex:none')
 
 
 class TablePreview:
@@ -121,11 +130,11 @@ class TablePreview:
         ui.label(f'{table.height:,} rows × {table.width} columns · {table.estimated_size("mb"):.2f} MB').classes('muted')
         with ui.row().classes('w-full items-center gap-3'):
             self.mode = ui.toggle({'head': 'first rows', 'tail': 'last rows', 'browse': 'all rows', 'schema': 'column info'}, value=state.get('mode', 'head'))
-            self.limit = ui.select([10, 25, 50, 100], value=state.get('limit', 25), label='rows per page').classes('w-36')
+            self.limit = ui.select([10, 25, 50, 100], value=state.get('limit', 25), label='rows per page').props('behavior=dialog').classes('w-36')
             for kind, label in [('csv', 'CSV'), ('txt', 'TXT'), ('xlsx', 'Excel')]:
                 ui.button(label, on_click=lambda kind=kind: self.download(kind)).props('flat dense')
         with ui.row().classes('w-full items-center') as self.sort_controls:
-            self.sort = ui.select({'': 'original order', **{c: c for c in table.columns}}, value=state.get('sort', '') if state.get('sort', '') in table.columns else '', label='sort all rows by').classes('w-64')
+            self.sort = ui.select({'': 'original order', **{c: c for c in table.columns}}, value=state.get('sort', '') if state.get('sort', '') in table.columns else '', label='sort all rows by').props('behavior=dialog').classes('w-64')
             self.descending = ui.checkbox('descending', value=state.get('descending', False))
         pages = max(1, math.ceil(table.height / self.limit.value))
         self.pagination = ui.pagination(1, pages, value=min(pages, state.get('page', 1)), direction_links=True).props('boundary-links max-pages=7')
@@ -166,3 +175,50 @@ class TablePreview:
             ui.download.content(data, f'{self.name}.{kind}')
         except (ValueError, OSError) as exc:
             ui.notify(str(exc), type='negative')
+
+
+class TableChoice:
+    def __init__(self, on_change):
+        self.options, self.value, self.on_change = {}, None, on_change
+        with ui.column().classes('gap-1 w-96 max-w-full shrink-0'):
+            ui.label('table').classes('muted')
+            self.button = ui.button('choose table', icon='table_chart', on_click=self.open).props('outline no-caps').classes('w-full').mark('table-choice').disable()
+        with ui.dialog() as self.dialog:
+            with ui.card().classes('w-full max-w-xl').style('width:560px;max-height:80vh'):
+                with ui.row().classes('w-full items-center'):
+                    ui.label('choose table').classes('text-lg font-bold grow')
+                    ui.button(icon='close', on_click=self.dialog.close).props('flat round dense')
+                self.search = ui.input('search tables', on_change=self.refresh).classes('w-full').props('clearable').mark('table-search')
+                self.choices = ui.column().classes('w-full gap-1').style('max-height:50vh;overflow:auto')
+
+    def set_options(self, options, *, value=None):
+        self.options = dict(options)
+        self.button.set_enabled(bool(options))
+        if not options: self.dialog.close()
+        self.set_value(value if value in options else None)
+        self.refresh()
+
+    def set_value(self, value):
+        if value is not None and value not in self.options: raise ValueError('Unknown table')
+        previous, self.value = self.value, value
+        self.button.set_text(self.options.get(value, 'choose table'))
+        if value != previous: self.on_change()
+
+    def open(self):
+        self.search.set_value('')
+        self.refresh()
+        self.dialog.open()
+
+    def refresh(self):
+        self.choices.clear()
+        query = (self.search.value or '').casefold().strip()
+        with self.choices:
+            matches = [(key, label) for key, label in self.options.items() if query in label.casefold() or query in key.casefold()]
+            if not matches: ui.label('No matching tables.').classes('muted')
+            for key, label in matches:
+                ui.button(label, icon='check' if key == self.value else 'table_chart',
+                          on_click=lambda key=key: self.choose(key)).props('flat no-caps align=left').classes('w-full').mark(f'table-option-{key}')
+
+    def choose(self, value):
+        self.dialog.close()
+        self.set_value(value)
