@@ -16,7 +16,7 @@ from . import plots as P
 from .metadata import folder_labels, resolve_labels
 from .catalogue import analysis_name
 from .pipeline import (DEFAULT_SETTINGS, analyses_for, build_tables, load_datasets,
-                       render_analysis, run_metadata, validate_settings)
+                       run_metadata, validate_settings)
 from .selection import select_data
 
 MAX_UPLOAD = 1024 * 1024 * 1024
@@ -153,18 +153,13 @@ class Project:
         cache, selection = self.cache, self.selection
         if name not in cache:
             analysis = next(a for a in self.analyses if analysis_name(a) == name)
-            try:
-                result = render_analysis(analysis, self.tables[analysis['table']], self.groups,
-                    P.colors_for(self.groups, self.cfg.get('colors')), self.cfg['settings'], self.starts, selection)
-            except ValueError as exc:
-                if str(exc) not in {'No data for this selection', 'No common observations for the selected groups'}:
-                    raise
-                figure = go.Figure()
-                figure.add_annotation(text=str(exc), showarrow=False, x=.5, y=.5, xref='paper', yref='paper')
-                figure.update_layout(title_text=analysis['title'], template='simple_white', height=540)
-                result = {'figure': figure, 'stats': {}, 'tests': [], 'notes': [str(exc)],
-                          'data': select_data(self.tables[analysis['table']], analysis, self.groups, selection)}
-            cache[name] = result
+            from .catalogue import analysis_section
+            from .inference import compute_results
+            scope = self.cfg['settings']['family_scope']
+            family = [a for a in self.analyses if scope == 'all' or
+                      (scope == 'section' and analysis_section(a) == analysis_section(analysis)) or a is analysis]
+            cache.update(compute_results(family, self.tables, self.groups,
+                P.colors_for(self.groups, self.cfg.get('colors')), self.cfg['settings'], self.starts, selection))
         original = cache[name]
         result = {**original, 'figure': go.Figure(original['figure'])}
         style = self.styles.get(name, {})

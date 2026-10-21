@@ -20,6 +20,7 @@ from .catalogue import analysis_name
 from .board import GraphBoard
 from .graph_editor import draw_editor
 from .period_controls import PeriodControls
+from .statistics_controls import statistics_controls, statistics_help
 from .table_view import TableChoice, TablePreview
 from .metadata import METADATA_FILE, group_hint, validate_labels
 from .plots import PLOT_CONFIG, colors_for
@@ -311,14 +312,11 @@ h1,h2{letter-spacing:-.025em}.plotly-graph-div{border-radius:12px}.muted{color:#
                 ui.label('This option applies to AnimalGate only. Keep only sessions with records for both directions: In and Out. Records are matched by mouse and session start time. Sessions missing either direction are excluded.').classes('muted')
             ui.label('statistics and appearance').classes('font-medium')
             with ui.row().classes('dashboard-filters w-full items-end p-3 gap-3 rounded-lg'):
-                self.error = ui.select(['sem', 'sd'], label='error bars', value=p.cfg['settings']['error'])
-                self.bar_style = ui.select(['bar', 'scatter'], label='summary style', value=p.cfg['settings']['bar_style'])
-                self.test = ui.select(['welch', 'student', 'mann_whitney', 'auto'], label='group test', value=p.cfg['settings']['test'])
-                self.repeated = ui.select(['mixed_anova', 'lmm'], label='repeated measures', value=p.cfg['settings']['repeated_test'])
-                self.adjust = ui.select(['sidak', 'holm', 'bonferroni', 'fdr_bh'], label='multiple comparisons', value=p.cfg['settings']['padjust'])
-                for field in (self.error, self.bar_style, self.test, self.repeated, self.adjust):
-                    field.props('outlined dense stack-label options-dense').classes('w-44 dashboard-selector')
+                self.statistics = statistics_controls(p.cfg['settings'])
+                self.error, self.bar_style, self.test, self.repeated, self.adjust = (
+                    self.statistics[key] for key in ('error', 'bar_style', 'test', 'repeated_test', 'padjust'))
                 ui.button('apply settings', on_click=self.recalculate).classes('dashboard-apply').mark('recalculate')
+            statistics_help()
 
     def add_window_range(self, name, rule=None):
         self.period_editor.add_range(name, rule)
@@ -385,12 +383,9 @@ h1,h2{letter-spacing:-.025em}.plotly-graph-div{border-radius:12px}.muted{color:#
         return self.show_graph()
 
     async def recalculate(self):
-        settings = {'period_windows': [{'name': n, 'start': s.value, 'end': e.value,
-                     'ranges': [{key: row[key].value for key in ('date_from', 'date_to', 'start', 'end')}
-                                for row in self.window_ranges[n]]} for n, s, e in self.window_inputs],
-                    'include_partial_periods': self.partial.value, 'gate_complete_only': self.paired.value,
+        settings = {**self.period_editor.values(), 'gate_complete_only': self.paired.value,
                     'latency_window_min': self.latency.value, 'min_day_hours': self.min_day.value,
-                    'error': self.error.value, 'bar_style': self.bar_style.value, 'test': self.test.value, 'repeated_test': self.repeated.value, 'padjust': self.adjust.value}
+                    **{key: field.value for key, field in self.statistics.items()}}
         def rebuild():
             self.project.rebuild(settings)
             return True
@@ -444,9 +439,8 @@ h1,h2{letter-spacing:-.025em}.plotly-graph-div{border-radius:12px}.muted{color:#
 
     @staticmethod
     def view_for(analysis):
-        if analysis.get('table') in ('activity_periods', 'activity_light_dark') or analysis.get('plot') == 'period_timecourse': return 'day / night'
-        if analysis.get('table') in ('activity_hourly', 'activity_elapsed', 'activity_circadian', 'gate_hourly'): return 'hourly activity'
-        return 'overview'
+        from .catalogue import analysis_section
+        return analysis_section(analysis)[0]
 
     def sections(self):
         return list(dict.fromkeys(a.get('section', 'Analysis') for a in self.project.analyses if self.view_for(a) == self.analysis_view.value))

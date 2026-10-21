@@ -15,7 +15,8 @@ POSTHOC_TESTS = ["welch", "student", "mann_whitney"]
 PADJUST = ["sidak", "holm", "bonferroni", "fdr_bh"]
 PAIRWISE_SCHEMA = {"metric": pl.Utf8, "test": pl.Utf8, "group_a": pl.Utf8, "group_b": pl.Utf8,
                    "diff_b_minus_a": pl.Float64, "statistic": pl.Float64, "df": pl.Float64,
-                   "p": pl.Float64, "p_adj": pl.Float64, "summary": pl.Utf8}
+                   "p": pl.Float64, "p_adj": pl.Float64, "summary": pl.Utf8,
+                   "ci95_low": pl.Float64, "ci95_high": pl.Float64, "ci_method": pl.Utf8}
 OMNIBUS_SCHEMA = {"metric": pl.Utf8, "test": pl.Utf8, "effect": pl.Utf8, "statistic": pl.Float64,
                    "df1": pl.Float64, "df2": pl.Float64, "p": pl.Float64, "summary": pl.Utf8,
                    "sphericity_corrected": pl.Boolean, "gg_epsilon": pl.Float64, "note": pl.Utf8}
@@ -24,7 +25,7 @@ OMNIBUS_SCHEMA = {"metric": pl.Utf8, "test": pl.Utf8, "effect": pl.Utf8, "statis
 def stars(p: float | None) -> str:
     if p is None or not np.isfinite(p):
         return ""
-    return "****" if p < 1e-4 else "***" if p < 1e-3 else "**" if p < 0.01 else "*" if p < 0.05 else "ns"
+    return "****" if p <= 1e-4 else "***" if p <= 1e-3 else "**" if p <= 0.01 else "*" if p <= 0.05 else "ns"
 
 
 def fmt_p(p: float | None) -> str:
@@ -95,7 +96,7 @@ def compare_groups(df: pl.DataFrame, value: str, groups: list[str], test: str = 
             name, stat, dof, p = _two_group(a, b, effective)
             rows.append({"metric": value, "test": name, "group_a": groups[0], "group_b": groups[1],
                          "diff_b_minus_a": float(np.mean(b) - np.mean(a)), "statistic": stat, "df": dof,
-                         "p": p, "p_adj": p, "summary": stars(p)})
+                         "p": p, "p_adj": p, "summary": stars(p), **difference_interval(a, b, name)})
     else:
         test = test if test in MULTI_GROUP_TESTS else "kruskal" if test == "mann_whitney" else "anova"
         xs = [data[g] for g in groups if len(data[g]) >= 2]
@@ -107,7 +108,11 @@ def compare_groups(df: pl.DataFrame, value: str, groups: list[str], test: str = 
         if test == "anova":
             omni, name = ss.f_oneway(*xs), "One-way ANOVA + Tukey"
             tk = ss.tukey_hsd(*xs)
-            raw = adj = [tk.pvalue[i, j] for i, j in pairs]
+            adj = [tk.pvalue[i, j] for i, j in pairs]
+            dof = sum(len(x) for x in xs) - len(xs)
+            variance = sum(float(np.square(x - x.mean()).sum()) for x in xs) / dof
+            raw = [float(2 * ss.t.sf(abs(xs[i].mean() - xs[j].mean()) /
+                   np.sqrt(variance * (1 / len(xs[i]) + 1 / len(xs[j]))), dof)) for i, j in pairs]
         else:
             omni, name = ss.kruskal(*xs), "Kruskal-Wallis + Mann-Whitney (Holm)"
             raw = [ss.mannwhitneyu(data[groups[i]], data[groups[j]]).pvalue for i, j in pairs]
@@ -208,7 +213,8 @@ def repeated_measures(df: pl.DataFrame, value: str, within: str, groups: list[st
                 continue
             name, stat, dof, p = _two_group(a, b, posthoc)
             ph.append({"metric": value, "level": lvl, "test": name, "group_a": ga, "group_b": gb,
-                       "mean_a": float(a.mean()), "mean_b": float(b.mean()), "statistic": stat, "df": dof, "p": p})
+                       "mean_a": float(a.mean()), "mean_b": float(b.mean()), "statistic": stat, "df": dof, "p": p,
+                       "diff_b_minus_a": float(b.mean() - a.mean()), **difference_interval(a, b, name)})
     posthoc_df = pl.DataFrame(ph, schema_overrides={"df": pl.Float64})
     if posthoc_df.height:
         posthoc_df = posthoc_df.with_columns(
@@ -250,18 +256,17 @@ def period_comparisons(df: pl.DataFrame, value: str, groups: list[str], periods:
                        paired_test: str = "paired_t", posthoc: str = "welch", padjust: str = "sidak") -> pl.DataFrame:
     """pair each mouse's day and night before comparing them."""
     rows = []
+    pairs = paired_values(df, value, periods)
     df = df.filter(pl.col(value).is_finite())
     for day in sorted(df["day"].unique()):
         daily = df.filter(day=day)
         for group in groups:
             sub = daily.filter(group=group)
             for pa, pb in combinations(periods, 2):
-                a = sub.filter(period=pa).select("lot", "animal", value)
-                b = sub.filter(period=pb).select("lot", "animal", value)
-                pair = a.join(b, on=["lot", "animal"], suffix="_b")
+                pair = pairs.filter(group=group, day=day, period_a=pa, period_b=pb)
                 if pair.height < 2:
                     continue
-                va, vb = pair[value].to_numpy(), pair[f"{value}_b"].to_numpy()
+                va, vb = pair["value_a"].to_numpy(), pair["value_b"].to_numpy()
                 if paired_test == "wilcoxon":
                     stat, p = (0., 1.) if np.all(va == vb) else ss.wilcoxon(va, vb)
                 elif paired_test == "paired_t":
@@ -270,7 +275,8 @@ def period_comparisons(df: pl.DataFrame, value: str, groups: list[str], periods:
                     raise ValueError(f"Unknown paired test: {paired_test}")
                 rows.append({"metric": value, "day": day, "period": f"{pa} vs {pb}", "group_a": group, "group_b": group,
                              "contrast": "within mouse", "test": paired_test, "n": pair.height,
-                             "statistic": float(stat), "p": float(p)})
+                             "statistic": float(stat), "p": float(p), "diff_b_minus_a": float((vb - va).mean()),
+                             **difference_interval(va, vb, paired_test, paired=True)})
         for period in periods:
             sub = daily.filter(period=period)
             for ga, gb in combinations(groups, 2):
@@ -279,11 +285,87 @@ def period_comparisons(df: pl.DataFrame, value: str, groups: list[str], periods:
                     continue
                 name, stat, _, p = _two_group(a, b, posthoc)
                 rows.append({"metric": value, "day": day, "period": period, "group_a": ga, "group_b": gb,
-                             "contrast": "between groups", "test": name, "n": len(a) + len(b), "statistic": stat, "p": p})
+                             "contrast": "between groups", "test": name, "n": len(a) + len(b), "statistic": stat, "p": p,
+                             "diff_b_minus_a": float(b.mean() - a.mean()), **difference_interval(a, b, name)})
     schema = {"metric": pl.Utf8, "day": pl.Int64, "period": pl.Utf8, "group_a": pl.Utf8, "group_b": pl.Utf8,
-              "contrast": pl.Utf8, "test": pl.Utf8, "n": pl.Int64, "statistic": pl.Float64, "p": pl.Float64}
+              "contrast": pl.Utf8, "test": pl.Utf8, "n": pl.Int64, "statistic": pl.Float64, "p": pl.Float64,
+              "diff_b_minus_a": pl.Float64, "ci95_low": pl.Float64, "ci95_high": pl.Float64, "ci_method": pl.Utf8}
     result = pl.DataFrame(rows, schema=schema)
     if result.height:
         result = result.with_columns(p_adj=pl.Series(adjust_pvalues(result["p"], padjust)), correction=pl.lit(padjust))
         result = result.with_columns(summary=pl.col("p_adj").map_elements(stars, return_dtype=pl.Utf8))
     return result
+
+
+def mean_interval(values):
+    """pointwise t interval for a mean, with mice as observations."""
+    values = np.asarray(values, dtype=float)
+    values = values[np.isfinite(values)]
+    if len(values) < 2:
+        return None, None
+    mean, sem = float(values.mean()), float(ss.sem(values))
+    margin = float(ss.t.ppf(.975, len(values) - 1)) * sem
+    return mean - margin, mean + margin
+
+
+def descriptive_intervals(table):
+    if table.is_empty():
+        return table.with_columns(ci95_low=pl.lit(None, pl.Float64), ci95_high=pl.lit(None, pl.Float64))
+    margins = [float(ss.t.ppf(.975, n - 1)) * sem if n > 1 and sem is not None else None
+               for n, sem in table.select('n', 'sem').iter_rows()]
+    return table.with_columns(_margin=pl.Series(margins, dtype=pl.Float64)).with_columns(
+        ci95_low=pl.col('mean') - pl.col('_margin'), ci95_high=pl.col('mean') + pl.col('_margin')).drop('_margin')
+
+
+def paired_values(df, value, periods):
+    keys = ['group', 'lot', 'phase', 'animal', 'day']
+    finite = df.filter(pl.col(value).is_finite())
+    if finite.group_by(keys + ['period']).len().filter(pl.col('len') > 1).height:
+        raise ValueError('More than one observation per mouse and period')
+    pairs = []
+    for pa, pb in combinations(periods, 2):
+        a = finite.filter(period=pa).select(*keys, pl.col(value).alias('value_a'))
+        b = finite.filter(period=pb).select(*keys, pl.col(value).alias('value_b'))
+        pairs.append(a.join(b, on=keys).with_columns(period_a=pl.lit(pa), period_b=pl.lit(pb),
+                                                   metric=pl.lit(value)).with_columns(
+            diff_b_minus_a=pl.col('value_b') - pl.col('value_a')))
+    if not pairs:
+        return pl.DataFrame(schema={**{key: df.schema[key] for key in keys}, 'value_a': pl.Float64,
+            'value_b': pl.Float64, 'period_a': pl.String, 'period_b': pl.String, 'metric': pl.String, 'diff_b_minus_a': pl.Float64})
+    return pl.concat(pairs).sort(keys + ['period_a', 'period_b'])
+
+
+def difference_interval(a, b, test, *, paired=False):
+    unavailable = {'ci95_low': None, 'ci95_high': None, 'ci_method': None}
+    if paired:
+        if test != 'paired_t':
+            return unavailable
+        lo, hi = mean_interval(b - a)
+        return {'ci95_low': lo, 'ci95_high': hi, 'ci_method': 'paired t, pointwise'}
+    if test not in ("Welch's t test", 'Unpaired t test') or min(len(a), len(b)) < 2:
+        return unavailable
+    va, vb = np.var(a, ddof=1), np.var(b, ddof=1)
+    if test == 'Unpaired t test':
+        dof = len(a) + len(b) - 2
+        variance = ((len(a) - 1) * va + (len(b) - 1) * vb) / dof
+        se = np.sqrt(variance * (1 / len(a) + 1 / len(b)))
+    else:
+        se = np.sqrt(va / len(a) + vb / len(b))
+        denominator = (va / len(a)) ** 2 / (len(a) - 1) + (vb / len(b)) ** 2 / (len(b) - 1)
+        if denominator == 0:
+            return unavailable
+        dof = se ** 4 / denominator
+    margin = float(ss.t.ppf(.975, dof) * se)
+    difference = float(b.mean() - a.mean())
+    return {'ci95_low': difference - margin, 'ci95_high': difference + margin,
+            'ci_method': ('Student t' if test == 'Unpaired t test' else 'Welch t') + ', pointwise'}
+
+
+def paired_descriptive(pairs):
+    keys = ['group', 'day', 'period_a', 'period_b', 'metric']
+    summaries = []
+    for field, period in [('value_a', 'period_a'), ('value_b', 'period_b')]:
+        summary = pairs.group_by(keys).agg(n=pl.len(), mean=pl.col(field).mean(), sd=pl.col(field).std(),
+                                          sem=pl.col(field).std() / pl.len().sqrt())
+        summaries.append(summary.with_columns(period=pl.col(period)))
+    return descriptive_intervals(pl.concat(summaries)).sort(keys + ['period'])

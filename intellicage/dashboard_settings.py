@@ -1,10 +1,8 @@
 from nicegui import ui
 
 from .period_controls import PeriodControls
+from .statistics_controls import statistics_controls, statistics_help
 
-
-def select(label, options, value):
-    return ui.select(options, label=label, value=value).props('outlined dense stack-label options-dense').classes('w-44 dashboard-selector')
 
 
 class DashboardSettings:
@@ -31,15 +29,11 @@ class DashboardSettings:
         with self.area:
             ui.label('statistics · all groups of graphs').classes('text-sm font-medium')
             with ui.row().classes('dashboard-filters w-full items-end gap-3 p-3 rounded-lg'):
-                for key, label, options in [('error', 'error bars', ['sem', 'sd']),
-                        ('bar_style', 'summary style', ['bar', 'scatter']),
-                        ('test', 'group test', ['welch', 'student', 'mann_whitney', 'auto']),
-                        ('repeated_test', 'repeated measures', ['mixed_anova', 'lmm']),
-                        ('padjust', 'multiple comparisons', ['sidak', 'holm', 'bonferroni', 'fdr_bh'])]:
-                    self.statistics[key] = select(label, options, settings[key])
+                self.statistics = statistics_controls(settings)
                 async def apply_statistics():
                     await self.apply({key: field.value for key, field in self.statistics.items()})
                 ui.button('apply statistics', on_click=apply_statistics).classes('dashboard-apply').mark('dashboard-statistics-apply')
+            statistics_help()
 
     def group(self, project, key, analyses):
         tables = {a['table'] for a in analyses}

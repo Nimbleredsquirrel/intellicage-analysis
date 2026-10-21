@@ -6,7 +6,7 @@ import numpy as np
 import plotly.graph_objects as go
 import polars as pl
 
-from .stats import fmt_p
+from .stats import fmt_p, mean_interval
 
 DEFAULT_COLORS = ['#2a78d6', '#eb6834', '#00cc96', '#ab63fa', '#ffa15a', '#19d3f3']
 PLOT_CONFIG = {'editable': False, 'scrollZoom': False, 'displaylogo': False,
@@ -27,7 +27,12 @@ def _mean_error(values, error='sem'):
     if not len(values):
         return None, None
     mean = float(np.mean(values))
-    sd = float(np.std(values, ddof=1)) if len(values) > 1 else 0.
+    if len(values) < 2:
+        return mean, None
+    sd = float(np.std(values, ddof=1))
+    if error == 'ci95':
+        lo, hi = mean_interval(values)
+        return mean, (hi - lo) / 2
     return mean, sd / np.sqrt(len(values)) if error == 'sem' else sd
 
 
@@ -58,7 +63,7 @@ def _test_note(fig, tests):
     rows = [r for r in tests.to_dicts() if r.get('group_a') != 'all']
     text = ' · '.join(f"{r['group_a']} vs {r['group_b']}: {fmt_p(r.get('p_adj', r.get('p')))}" for r in rows)
     if text:
-        fig.add_annotation(text=text, xref='paper', yref='paper', x=.5, y=1.1,
+        fig.add_annotation(name='stat', text=text, xref='paper', yref='paper', x=.5, y=1.1,
                            showarrow=False, font={'size': 11})
 
 
@@ -114,7 +119,7 @@ def grouped_plot(df, value, category, groups, colors, *, title, ylabel, xlabel='
         for row in posthoc.to_dicts():
             category_value = next((c for c in categories if str(c) == row['level']), None)
             if category_value is not None:
-                fig.add_annotation(x=(category_labels or {}).get(category_value, str(category_value)),
+                fig.add_annotation(name='stat', x=(category_labels or {}).get(category_value, str(category_value)),
                                    y=1.04, yref='paper', showarrow=False, text=fmt_p(row.get('p_adj')),
                                    font={'size': 11})
     fig.update_layout(barmode='group', scattermode='group', scattergap=.5)
@@ -158,7 +163,7 @@ def timecourse_plot(df, value, x, groups, colors, *, title, ylabel, xlabel='', x
             if row.get('summary') not in ('', 'ns', None):
                 xv = next((v for v in xs if str(v) == row['level']), None)
                 if xv is not None:
-                    fig.add_annotation(x=xv, y=1.03, yref='paper', showarrow=False,
+                    fig.add_annotation(name='stat', x=xv, y=1.03, yref='paper', showarrow=False,
                                        text=f"{row['summary']}<br>{fmt_p(row.get('p_adj'))}", font={'size': 10})
     if x_labels:
         fig.update_xaxes(tickmode='array', tickvals=xs, ticktext=[x_labels.get(v, str(v)) for v in xs])
@@ -232,3 +237,46 @@ def save(fig: go.Figure, out_html: Path, out_png: Path | None = None):
     fig.write_html(out_html, include_plotlyjs='directory', config=PLOT_CONFIG)
     if out_png is not None:
         fig.write_image(out_png, width=1200, height=650, scale=2)
+
+
+def paired_period_plot(pairs, groups, colors, *, title, ylabel, error='sem', ylim=None, show_n=True):
+    from plotly.subplots import make_subplots
+
+    days = sorted(pairs['day'].unique().to_list())
+    if not days:
+        fig = go.Figure()
+        fig.add_annotation(text='No complete mouse pairs for this selection', showarrow=False)
+        return _finish(fig, title, ylabel, ylim=ylim)
+    columns = min(3, len(days))
+    rows = (len(days) + columns - 1) // columns
+    fig = make_subplots(rows=rows, cols=columns, subplot_titles=[f'Cycle {d}' for d in days],
+                        vertical_spacing=min(.16, .6 / rows))
+    for index, day in enumerate(days):
+        row, col = index // columns + 1, index % columns + 1
+        labels, ticks = [], []
+        for gi, group in enumerate(groups):
+            sub = pairs.filter(group=group, day=day)
+            # each segment belongs to one mouse in one cycle
+            xs, ys, tips = [], [], []
+            for mouse in sub.iter_rows(named=True):
+                xs.extend([gi * 3, gi * 3 + 1, None])
+                ys.extend([mouse['value_a'], mouse['value_b'], None])
+                tip = f"mouse {mouse['animal']} · {mouse['lot']} · {mouse['phase']}"
+                tips.extend([tip, tip, None])
+            fig.add_trace(go.Scatter(x=xs, y=ys, text=tips, mode='lines+markers', name=group,
+                legendgroup=group, showlegend=index == 0, meta=_meta(group, 'paired mice'),
+                line={'color': colors[group], 'width': 1}, marker={'size': 6}, opacity=.55,
+                hovertemplate='%{text}<br>%{y:.5g}<extra></extra>'), row=row, col=col)
+            means, errors = zip(*[_mean_error(sub[field].to_numpy(), error) for field in ('value_a', 'value_b')])
+            fig.add_trace(go.Scatter(x=[gi * 3, gi * 3 + 1], y=means, mode='markers',
+                marker={'symbol': 'line-ew', 'size': 25, 'color': colors[group], 'line': {'width': 3}},
+                error_y={'type': 'data', 'array': errors}, name=f'{group} · mean', showlegend=False,
+                meta=_meta(group, 'paired mean'), customdata=[sub.height] * 2,
+                hovertemplate='mean %{y:.5g}<br>paired n=%{customdata}<extra></extra>'), row=row, col=col)
+            ticks.extend([gi * 3, gi * 3 + 1])
+            names = [sub['period_a'][0], sub['period_b'][0]] if sub.height else ['day', 'night']
+            labels.extend([f'{group}<br>{name}' + (f'<br>n={sub.height}' if show_n else '') for name in names])
+        fig.update_xaxes(tickmode='array', tickvals=ticks, ticktext=labels, row=row, col=col)
+    _finish(fig, title, ylabel, ylim=ylim)
+    fig.update_layout(height=max(540, rows * 360 + 150))
+    return fig

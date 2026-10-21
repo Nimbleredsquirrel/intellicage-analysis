@@ -95,3 +95,13 @@ def default_analyses(tables: dict, settings: dict) -> list[dict]:
                                 ('visits_per_gate_session', 'Visits per gate session by hour', 'Visits / session')]:
         add('gate_hourly', value, 'AnimalGate hourly', title, unit, by='hour', common_levels=True)
     return result
+
+
+def analysis_section(a):
+    if a.get('table') in ('activity_periods', 'activity_light_dark') or a.get('plot') == 'period_timecourse':
+        view = 'day / night'
+    elif a.get('table') in ('activity_hourly', 'activity_elapsed', 'activity_circadian', 'gate_hourly'):
+        view = 'hourly activity'
+    else:
+        view = 'overview'
+    return view, a.get('section', 'Analysis')

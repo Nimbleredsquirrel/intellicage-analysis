@@ -7,7 +7,7 @@ import pytest
 from intellicage import stats as S
 
 
-@pytest.mark.parametrize("p,text", [(None, ""), (math.nan, ""), (math.inf, ""), (.05, "ns"),
+@pytest.mark.parametrize("p,text", [(None, ""), (math.nan, ""), (math.inf, ""), (.05, "*"),
                                     (.049, "*"), (.009, "**"), (.0009, "***"), (.00009, "****")])
 def test_significance_boundaries(p, text):
     assert S.stars(p) == text

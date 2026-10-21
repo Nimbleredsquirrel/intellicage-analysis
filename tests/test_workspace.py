@@ -651,3 +651,46 @@ async def test_dashboard_groups_graphs_and_exposes_common_and_specific_settings(
         with user.client: await page.show_graph()
         with user.client: board.resized(name, {'width': 400, 'height': 400}, card)
         assert board.cards[name].style['width'] == '700px'
+
+
+@pytest.mark.asyncio
+async def test_inference_settings_are_shared_between_graphs_and_dashboard(config):
+    config['analyses'] = 'all'
+    pages = []
+    async def root():
+        page = Explorer(None, local=True, native=True)
+        pages.append(page)
+        await page.install(Project(config))
+    async with user_simulation(root) as user:
+        await user.open('/')
+        page = pages[0]
+        with user.client:
+            for key, value in {'error': 'ci95', 'significance': 'both', 'show_ns': True,
+                               'show_n': False, 'family_scope': 'section'}.items():
+                page.statistics[key].set_value(value)
+        user.find(marker='recalculate').click()
+        await settled(page)
+        settings = page.project.cfg['settings']
+        assert settings['error'] == 'ci95'
+        assert settings['significance'] == 'both'
+        assert settings['family_scope'] == 'section'
+        assert not settings['show_n']
+        with user.client:
+            period = next(a for a in page.project.analyses if a.get('plot') == 'period_timecourse')
+            name = analysis_name(period)
+            page.board.add(name)
+            page.workspace_tabs.set_value('page')
+        await settled(page)
+        controls = page.board.settings.statistics
+        assert controls['error'].value == 'ci95'
+        assert controls['show_ns'].value is True
+        assert controls['show_n'].value is False
+        with user.client:
+            editor = next(iter(page.board.settings.periods.values()))
+            editor.style.set_value('paired')
+            await page.board.settings.apply(editor.values())
+        assert page.project.cfg['settings']['period_style'] == 'paired'
+        assert page.period_editor.style.value == 'paired'
+        result = page.project.result(name)
+        assert any(trace.meta['role'] == 'paired mice' for trace in result['figure'].data)
+        assert all(note.name != 'sample-size' for note in result['figure'].layout.annotations)

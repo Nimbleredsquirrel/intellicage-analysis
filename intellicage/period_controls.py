@@ -23,6 +23,9 @@ class PeriodControls:
             ui.label('Dates include both endpoints and refer to the start of the window. Nights may end the next day. Default hours apply outside date ranges.').classes('muted')
             self.partial = ui.checkbox('include incomplete first / last windows', value=project.cfg['settings']['include_partial_periods']).mark('partial-windows')
             ui.label('Include windows cut short by the start or end of the recording. For example, if day is set to 08:00–20:00 but recording starts at 12:00, enabling this option includes that incomplete day in the comparison. Day and night must still form a pair.').classes('muted')
+            self.style = ui.select({'timecourse': 'cycles over time', 'paired': 'paired mice · day / night'},
+                label='day / night graph', value=project.cfg['settings']['period_style']).props('outlined dense stack-label').classes('w-64 dashboard-selector')
+            ui.label('Paired view connects the same mouse within one cycle. Only complete pairs are plotted; all original values remain in intermediate tables.').classes('muted')
             ui.button('apply day / night settings', on_click=on_apply).classes('dashboard-apply').mark('apply-periods')
 
     @staticmethod
@@ -50,4 +53,4 @@ class PeriodControls:
         return {'period_windows': [{'name': n, 'start': s.value, 'end': e.value,
                 'ranges': [{key: row[key].value for key in ('date_from', 'date_to', 'start', 'end')}
                            for row in self.ranges[n]]} for n, s, e in self.inputs],
-                'include_partial_periods': self.partial.value}
+                'include_partial_periods': self.partial.value, 'period_style': self.style.value}

@@ -157,7 +157,7 @@ async def test_removing_a_folder_preserves_an_intentionally_empty_group_selectio
 
 @pytest.mark.asyncio
 async def test_old_selection_cannot_repopulate_the_current_cache(config, monkeypatch):
-    import intellicage.project as service
+    import intellicage.pipeline as service
     pages = []
     async def root():
         page = Explorer(None, local=True, native=True)

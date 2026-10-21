@@ -24,7 +24,8 @@ from .timebins import period_windows
 DEFAULT_SETTINGS = {'light_on': 8, 'light_off': 20, 'latency_window_min': None, 'min_day_hours': 12,
                     'test': 'welch', 'repeated_test': 'mixed_anova', 'posthoc': 'welch', 'padjust': 'sidak',
                     'bar_style': 'bar', 'error': 'sem', 'include_partial_periods': False,
-                    'gate_complete_only': False, 'export_images': False}
+                    'gate_complete_only': False, 'export_images': False, 'significance': 'p', 'show_ns': False,
+                    'show_n': True, 'family_scope': 'graph', 'period_style': 'timecourse'}
 TABLES = ['mouse_summary', 'corner_summary', 'learning_by_day', 'activity_hourly', 'activity_elapsed',
           'activity_circadian', 'activity_periods', 'activity_light_dark', 'latency', 'gate_sessions',
           'gate_summary', 'gate_hourly']
@@ -49,7 +50,17 @@ def load_config(path: Path) -> dict:
 
 
 def validate_settings(settings):
-    period_windows(settings)
+    windows = period_windows(settings)
+    if settings.get('period_style') == 'paired' and len(windows) != 2:
+        raise ValueError('Paired view requires exactly two day/night windows')
+    for key, choices in {'error': ['sem', 'sd', 'ci95'], 'bar_style': ['bar', 'scatter'],
+                         'significance': ['p', 'stars', 'both', 'none'], 'family_scope': ['graph', 'section', 'all'],
+                         'period_style': ['timecourse', 'paired']}.items():
+        if settings.get(key, DEFAULT_SETTINGS[key]) not in choices:
+            raise ValueError(f'Unknown {key}')
+    for key in ('show_n', 'show_ns'):
+        if not isinstance(settings.get(key, DEFAULT_SETTINGS[key]), bool):
+            raise ValueError(f'{key} must be a boolean')
     window = settings['latency_window_min']
     if window is not None and (isinstance(window, bool) or not np.isfinite(float(window)) or float(window) <= 0):
         raise ValueError('Latency window must be positive minutes or null for the full phase')
@@ -157,7 +168,7 @@ def analyse(a: dict, sub: pl.DataFrame, groups: list[str], colors: dict, setting
                 posthoc = S.period_comparisons(sub, value, groups, periods, paired_test=a.get('paired_test', 'paired_t'),
                                               posthoc=a.get('posthoc', settings['posthoc']), padjust=a.get('padjust', settings['padjust']))
                 result['stats']['posthoc'] = posthoc
-                result['notes'].append('Day/night tests pair mice within each cycle. Adjusted P values cover the comparisons in this graph.')
+                result['notes'].append('Day/night tests pair mice within each cycle. See family metadata in the statistics CSV for the correction scope.')
         elif not by:
             S.validate_observations(sub)
             if run_stats and len(groups) >= 2:
@@ -176,13 +187,23 @@ def analyse(a: dict, sub: pl.DataFrame, groups: list[str], colors: dict, setting
         if not by and plot != 'latency':
             raise
         result['notes'].append(f'Statistics unavailable: {exc}')
+    if value and plot != 'latency':
+        result['stats']['descriptive'] = S.descriptive_intervals(result['stats']['descriptive'])
+        result['notes'].append('Error bars: ' + error_label(a.get('error', settings['error'])) + '. Mean confidence intervals are pointwise t intervals, not corrected for multiple comparisons; they require at least two mice.')
+    if plot == 'period_timecourse':
+        result['stats']['paired_values'] = S.paired_values(sub, value, [w['name'] for w in period_windows(settings)])
+        result['stats']['paired_descriptive'] = S.paired_descriptive(result['stats']['paired_values'])
     common = {'title': title, 'ylabel': a.get('ylabel', value), 'ylim': a.get('ylim')}
     error = a.get('error', settings['error'])
     if plot == 'latency':
         result['figure'] = P.latency_plot(sub, value, groups, colors, pairwise=pairwise if run_stats else None, **common)
     elif plot == 'period_timecourse':
-        result['figure'] = P.period_timecourse(sub, value, groups, [w['name'] for w in period_windows(settings)],
-                                               colors, posthoc=posthoc, error=error, **common)
+        if settings.get('period_style') == 'paired':
+            result['figure'] = P.paired_period_plot(result['stats']['paired_values'], groups, colors, error=error,
+                                                            show_n=settings.get('show_n', True), **common)
+        else:
+            result['figure'] = P.period_timecourse(sub, value, groups, [w['name'] for w in period_windows(settings)],
+                                                   colors, posthoc=posthoc, error=error, **common)
     elif not by:
         result['figure'] = P.column_plot(sub, value, groups, colors, pairwise=pairwise,
                                          style=a.get('style', settings['bar_style']), error=error, **common)
@@ -197,7 +218,13 @@ def analyse(a: dict, sub: pl.DataFrame, groups: list[str], colors: dict, setting
         else:
             result['figure'] = P.grouped_plot(sub, value, by, groups, colors, posthoc=posthoc, error=error,
                                               category_labels=labels, xlabel=a.get('xlabel', bd['xlabel']), **common)
+    from .inference import annotate
+    annotate(a, result, settings)
     return result
+
+
+def error_label(error):
+    return {'sem': 'SEM', 'sd': 'SD', 'ci95': '95% CI of the mean'}[error]
 
 
 def render_analysis(a, table, groups, colors, settings, phase_starts, selection=None):
@@ -210,10 +237,18 @@ def render_analysis(a, table, groups, colors, settings, phase_starts, selection=
     if a.get('plot') == 'gate_raster':
         return {'figure': P.gate_raster(sub, phase_starts, present, colors, title=a.get('title', 'AnimalGate sessions')),
                 'data': sub, 'stats': {}, 'tests': [], 'notes': []}
-    return analyse(a, sub, present, colors, settings, title=a.get('title', a['value']))
+    result = analyse(a, sub, present, colors, settings, title=a.get('title', a['value']))
+    from .inference import annotate, sample_sizes
+    eligible = select_data(table, {key: val for key, val in a.items() if key != 'value'}, groups, selection)
+    if a.get('common_levels'):
+        eligible = eligible.filter(pl.col(a['by']).is_in(result['data'][a['by']].unique().implode()))
+    result['stats']['sample_sizes'] = sample_sizes(eligible, a)
+    result['notes'].append('n counts mice, not events. Missing includes unavailable mouse values within the selected cohort. Latency n includes right-censored mice.')
+    annotate(a, result, settings)
+    return result
 
 
-def _run_analysis(a, tables, groups, colors, settings, out, phase_starts, selection=None, styles=None):
+def _run_analysis(a, tables, groups, colors, settings, out, phase_starts, selection=None, styles=None, prepared=None):
     if a['table'] not in tables:
         print(f"  skip {analysis_name(a)}: no data")
         return []
@@ -222,10 +257,17 @@ def _run_analysis(a, tables, groups, colors, settings, out, phase_starts, select
     several = data['phase'].n_unique() > 1
     for phase in sorted(data['phase'].unique()):
         selected = {**(selection or {}), 'phases': [phase]}
-        res = render_analysis(a, tables[a['table']], groups, colors, settings, phase_starts, selected)
+        if prepared is not None:
+            import copy
+            res = copy.deepcopy(prepared[phase][analysis_name(a)])
+        else:
+            from .inference import compute_results
+            res = compute_results([a], tables, groups, colors, settings, phase_starts, selected)[analysis_name(a)]
         if style := (styles or {}).get(analysis_name(a)):
             from .project import merge_layout, trace_key
             merge_layout(res['figure'], style.get('layout', {}))
+            if size := style.get('size'):
+                res['figure'].update_layout(**size, autosize=False)
             for trace in res['figure'].data:
                 if patch := style.get('traces', {}).get(trace_key(trace)):
                     trace.update(patch)
@@ -325,13 +367,19 @@ def run(config_path: str | Path, only: list[str] | None = None, *, configuration
         selected_tables = {name: select_data(table, {}, groups, selection) for name, table in tables.items()}
         for table_name, table in selected_tables.items():
             table.write_csv(stage / 'tables' / f'{table_name}.csv')
+        from .inference import compute_results
+        prepared = None
+        if settings.get('family_scope', 'graph') != 'graph':
+            phases = sorted({phase for table in selected_tables.values() for phase in table['phase'].unique()})
+            prepared = {phase: compute_results(analyses, tables, groups, colors, settings, starts,
+                        {**selection, 'phases': [phase]}) for phase in phases}
         entries = []
         for a in analyses:
             label = a.get('name') or a.get('value') or a.get('plot')
             if only and not ({label, a.get('value'), analysis_name(a)} & set(only)):
                 continue
             print(f'  {a.get("title", label)}', flush=True)
-            entries.extend(_run_analysis(a, tables, groups, colors, settings, stage, starts, selection, cfg.get('styles')))
+            entries.extend(_run_analysis(a, tables, groups, colors, settings, stage, starts, selection, cfg.get('styles'), prepared))
         _report(stage, name, entries, datasets, selected_tables)
         info = run_metadata(datasets, cfg)
         info['graphs'] = len(entries)
