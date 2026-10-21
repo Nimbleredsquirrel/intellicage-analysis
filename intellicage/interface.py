@@ -144,6 +144,8 @@ class Explorer:
 .nicegui-content{max-width:1500px;margin:auto;padding:28px;width:100%}.q-drawer{background:#ffffff}
 h1,h2{letter-spacing:-.025em}.plotly-graph-div{border-radius:12px}.muted{color:#667085;font-size:13px}
 .chart-window{resize:both;overflow:hidden;flex:0 0 auto;max-width:100%;min-width:min(320px,100%);min-height:300px}
+.single-chart-window{resize:both;overflow:hidden;max-width:100%;min-width:min(300px,100%);min-height:300px;max-height:4000px;flex:none;display:flex}
+.single-chart-window .js-plotly-plot{min-height:0!important}
 .chart-drag-handle{touch-action:none}.chart-window .js-plotly-plot{min-height:0!important}
 .nicegui-tab-panel{padding:0;overflow:visible}.q-expansion-item{flex-shrink:0}''')
         with ui.header().classes('bg-white text-primary border-b items-center px-6'):
@@ -205,7 +207,9 @@ h1,h2{letter-spacing:-.025em}.plotly-graph-div{border-radius:12px}.muted{color:#
             with ui.tab_panel('tables').classes('w-full'):
                 ui.label('tables').classes('text-lg font-bold')
                 ui.label('Full intermediate tables for the current groups, phase and mice. Downloads include every selected row and column.').classes('muted')
-                self.table_select = ui.select({}, label='table', on_change=self.show_table).classes('w-96 max-w-full').mark('table-choice')
+                self.table_select = ui.select({}, label='table', with_input=True, on_change=self.show_table).props(
+                    'outlined stack-label behavior=menu menu-anchor="bottom left" menu-self="top left" popup-content-style="max-height:280px" transition-show=none transition-hide=none'
+                ).classes('w-96 max-w-full shrink-0').mark('table-choice')
                 self.table_content = ui.column().classes('w-full min-w-0').mark('table-preview')
         self.task_controls = [self.new_button, self.save_button, self.export_button, self.section, self.graph_select, self.analysis_view]
         self.task_controls.extend(button for button in [self.folder_button, self.open_button, self.board.apply_button] if button is not None)
@@ -240,14 +244,16 @@ h1,h2{letter-spacing:-.025em}.plotly-graph-div{border-radius:12px}.muted{color:#
         self.summary.set_text(f'{sum(d.animals.height for d in project.datasets)} mice · {len(project.datasets)} exports · {len(project.analyses)} graphs')
         self.sources.clear()
         with self.sources:
-            with ui.expansion('exports & data checks').classes('w-full'):
-                for ds in project.datasets:
-                    ui.label(f'{ds.group} / {ds.lot} / {ds.phase} · {ds.animals.height} mice · {ds.visits.height:,} visits')
+            ui.label('exports & data checks').classes('text-lg font-bold')
+            for ds in project.datasets:
+                with ui.column().classes('w-full gap-1'):
+                    ui.label(f'{ds.group} / {ds.lot} / {ds.phase}').classes('font-medium text-sm')
+                    ui.label(f'{ds.animals.height} mice · {ds.visits.height:,} visits').classes('muted')
                     for warning in ds.warnings:
                         ui.label(warning).classes('text-amber-900 text-sm')
-                gate = project.tables.get('gate_sessions')
-                if gate is not None:
-                    ui.label(f'AnimalGate: {gate.filter(~pl.col("paired")).height} single-direction records. Keep all records or use paired records only in settings.').classes('muted')
+            gate = project.tables.get('gate_sessions')
+            if gate is not None:
+                ui.label(f'AnimalGate: {gate.filter(~pl.col("paired")).height} single-direction records. Keep all records or use paired records only in settings.').classes('muted')
         self.build_filters()
         self.build_calculations()
         self.board.prepare()
@@ -567,10 +573,20 @@ h1,h2{letter-spacing:-.025em}.plotly-graph-div{border-radius:12px}.muted{color:#
         with self.graph_area:
             with ui.card().classes('w-full p-2'):
                 figure = result['figure'].to_plotly_json()
-                figure['config'] = PLOT_CONFIG
-                plot = ui.plotly(figure).classes('w-full').mark('plot')
-                plot.on('plotly_relayout', lambda e: project.edit_layout(name, e.args))
-                plot.on('plotly_restyle', lambda e: project.edit_traces(name, e.args))
+                width, height = figure['layout'].pop('width', None), figure['layout'].pop('height', 540)
+                figure['layout']['autosize'] = True
+                figure['config'] = {**PLOT_CONFIG, 'responsive': True}
+                with ui.element('div').classes('single-chart-window').style(
+                        f'width:{str(width) + "px" if width else "100%"};height:{height}px').mark('graph-window') as window:
+                    ui.element('q-resize-observer').props('debounce=0').on(
+                        'resize', lambda e: self.resize_graph(project, name, window, size_label, e.args),
+                        args=['width', 'height']).mark('graph-size')
+                    plot = ui.plotly(figure).classes('w-full min-h-0').style('height:100%').mark('plot')
+                    plot.on('plotly_relayout', lambda e: project.edit_layout(name, e.args))
+                    plot.on('plotly_restyle', lambda e: project.edit_traces(name, e.args))
+                with ui.row().classes('w-full items-center gap-2'):
+                    ui.label('Drag the bottom-right corner to resize. Downloads keep this size.').classes('muted')
+                    size_label = ui.label(f'{width} × {height} px' if width else '').classes('muted').mark('graph-dimensions')
                 with ui.row().classes('w-full px-4'):
                     ui.button('HTML', on_click=lambda: self.download_graph('html')).props('flat dense')
                     ui.button('PNG', on_click=lambda: self.download_graph('png')).props('flat dense')
@@ -626,6 +642,13 @@ h1,h2{letter-spacing:-.025em}.plotly-graph-div{border-radius:12px}.muted{color:#
                         self.grid(table, f'{name}__{kind}')
                     self.grid(result['data'], name)
             statistics.on_value_change(show_statistics)
+
+    def resize_graph(self, project, name, window, label, size):
+        if project is not self.project or name != self.name or window.is_deleted: return
+        if project.resize_graph(name, size):
+            saved = project.styles[name]['size']
+            label.set_text(f'{saved["width"]} × {saved["height"]} px')
+
     @staticmethod
     def grid(table, name='table'):
         return TablePreview(table, name)
@@ -819,7 +842,7 @@ h1,h2{letter-spacing:-.025em}.plotly-graph-div{border-radius:12px}.muted{color:#
         if not self.project or not name: return
         def create():
             figure = self.project.result(name)['figure']
-            return figure.to_html(include_plotlyjs=True, config=PLOT_CONFIG) if kind == 'html' else figure.to_image(format=kind, scale=2)
+            return figure.to_html(include_plotlyjs=True, config={**PLOT_CONFIG, 'responsive': False} if figure.layout.width else PLOT_CONFIG) if kind == 'html' else figure.to_image(format=kind, scale=1)
         data = await self.task(create)
         if data: ui.download.content(data.encode() if isinstance(data, str) else data, f'{name}.{kind}')
 

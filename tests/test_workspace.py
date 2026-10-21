@@ -370,3 +370,58 @@ async def test_dashboard_dialog_batches_selection_and_cancels_without_changes(co
         assert not board.checkboxes
         user.find(marker='dashboard-choose').click()
         assert user.notify.contains('Add your data folders first')
+
+
+@pytest.mark.asyncio
+async def test_single_graph_size_follows_filters_project_and_downloads(config, tmp_path, monkeypatch):
+    import plotly.graph_objects as go
+    pages = []
+    async def root():
+        page = Explorer(None, local=True, native=True)
+        pages.append(page)
+        await page.install(Project(config))
+    async with user_simulation(root) as user:
+        await user.open('/')
+        page = pages[0]
+        name = page.name
+        assert not any(isinstance(e, ui.expansion) for e in page.sources.descendants())
+        source_title = next(e for e in page.sources.descendants() if isinstance(e, ui.label))
+        selection_title = next(e for e in page.filters.descendants() if isinstance(e, ui.label))
+        assert source_title.classes == selection_title.classes
+        assert page.table_select.props['stack-label']
+        assert page.table_select.props['menu-anchor'] == 'bottom left'
+        assert page.table_select.props['menu-self'] == 'top left'
+        old_window = next(e for e in page.graph_area.descendants() if 'single-chart-window' in e.classes)
+        user.find(marker='graph-size').trigger('resize', {'width': 840, 'height': 420})
+        user.find(marker='graph-size').trigger('resize', {'width': 0, 'height': 0})
+        assert page.project.styles[name]['size'] == {'width': 840, 'height': 420}
+        assert user.find(marker='graph-dimensions').elements.pop().text == '840 × 420 px'
+        plot = next(e for e in page.graph_area.descendants() if isinstance(e, ui.plotly))
+        assert plot.figure['config']['toImageButtonOptions']['width'] is None
+        assert plot.figure['config']['toImageButtonOptions']['height'] is None
+        with user.client:
+            page.project.edit_layout(name, {'title.text': 'resized graph'})
+            page.group_checkboxes['ko'].set_value(False)
+        await settled(page)
+        window = next(e for e in page.graph_area.descendants() if 'single-chart-window' in e.classes)
+        assert window.style['width'] == '840px' and window.style['height'] == '420px'
+        # old observer events must not resize the new plot
+        page.resize_graph(page.project, name, old_window, source_title, {'width': 600, 'height': 600})
+        assert page.project.result(name)['figure'].layout.width == 840
+        with user.client: await page.download_graph('html')
+        await asyncio.sleep(.02)
+        html = user.download.http_responses[-1].text
+        assert 'width:840px' in html and 'height:420px' in html
+        assert 'resized graph' in html and '"responsive": false' in html
+        images = []
+        def capture_image(figure, **kwargs):
+            images.append((figure.layout.width, figure.layout.height, kwargs))
+            return b'image bytes'
+        monkeypatch.setattr(go.Figure, 'to_image', capture_image)
+        with user.client:
+            await page.download_graph('png')
+            await page.download_graph('svg')
+        assert images == [(840, 420, {'format': 'png', 'scale': 1}), (840, 420, {'format': 'svg', 'scale': 1})]
+        with user.client: await page.install(Project.open(page.project.save(), tmp_path/'resized'))
+        assert page.project.result(name)['figure'].layout.width == 840
+        assert page.project.result(name)['figure'].layout.height == 420

@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import io
 import json
+import math
 import re
 import tempfile
 import zipfile
@@ -168,10 +169,20 @@ class Project:
         result = {**original, 'figure': go.Figure(original['figure'])}
         style = self.styles.get(name, {})
         merge_layout(result['figure'], style.get('layout', {}))
+        if size := style.get('size'):
+            result['figure'].update_layout(**size, autosize=False)
         for trace in result['figure'].data:
             if patch := style.get('traces', {}).get(trace_key(trace)):
                 trace.update(patch)
         return result
+
+    def resize_graph(self, name, size):
+        values = [size.get(key) for key in ('width', 'height')]
+        if not all(isinstance(v, (int, float)) and not isinstance(v, bool)
+                   and math.isfinite(v) and 300 <= v <= 4000 for v in values):
+            return False
+        self.styles.setdefault(name, {})['size'] = dict(zip(('width', 'height'), map(round, values)))
+        return True
 
     def edit_layout(self, name, event):
         patches = layout_patch(event)

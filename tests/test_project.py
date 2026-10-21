@@ -158,3 +158,22 @@ def test_archive_limits_and_duplicate_names(tmp_path,monkeypatch):
     monkeypatch.setattr(service,'MAX_UPLOAD',10000)
     monkeypatch.setattr(service,'MAX_FILES',1)
     with pytest.raises(ValueError,match='Archive is too large'): unpack(data.getvalue(),tmp_path/'many')
+
+
+def test_resized_figures_keep_dimensions_in_exports_without_changing_cache(project):
+    name = project.analyses[0]['name']
+    project.result(name)
+    for size in [{'width': 0, 'height': 500}, {'width': True, 'height': 500},
+                 {'width': float('nan'), 'height': 500}, {'width': 800},
+                 {'width': 800, 'height': 4001}]:
+        assert not project.resize_graph(name, size)
+    assert project.resize_graph(name, {'width': 815.4, 'height': 405.6})
+    assert project.cache[name]['figure'].layout.width is None
+    result = project.result(name)['figure']
+    assert (result.layout.width, result.layout.height, result.layout.autosize) == (815, 406, False)
+    with zipfile.ZipFile(io.BytesIO(project.export())) as archive:
+        figure = json.loads(archive.read(f'figures/json/{name}.json'))
+        assert figure['layout']['width'] == 815
+        assert figure['layout']['height'] == 406
+        html = archive.read(f'figures/html/{name}.html').decode()
+        assert 'width:815px' in html and 'height:406px' in html
