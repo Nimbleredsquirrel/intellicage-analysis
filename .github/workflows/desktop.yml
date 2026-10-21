@@ -1,20 +1,18 @@
 name: desktop builds
 on:
   workflow_dispatch:
-  push:
-    branches: [draft]
-    paths:
-      - 'app.py'
-      - 'intellicage/**'
-      - 'pyproject.toml'
-      - 'poetry.lock'
-      - '.github/workflows/desktop.yml'
 jobs:
   build:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, windows-latest]
+        include:
+          - os: macos-14
+            package: macOS-Apple-Silicon
+          - os: macos-15-intel
+            package: macOS-Intel
+          - os: windows-latest
+            package: Windows
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -34,12 +32,12 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: archive mac app
         if: runner.os == 'macOS'
-        run: ditto -c -k --sequesterRsrc --keepParent 'dist/intellicage analysis.app' dist/intellicage-analysis-macOS.zip
+        run: ditto -c -k --sequesterRsrc --keepParent 'dist/intellicage analysis.app' 'dist/intellicage-analysis-${{ matrix.package }}.zip'
       - name: archive windows app
         if: runner.os == 'Windows'
         run: Compress-Archive -Path 'dist/intellicage analysis' -DestinationPath dist/intellicage-analysis-Windows.zip
       - uses: actions/upload-artifact@v4
         with:
-          name: intellicage-analysis-${{ matrix.os }}
-          path: dist/intellicage-analysis-*.zip
+          name: intellicage-analysis-${{ matrix.package }}
+          path: dist/intellicage-analysis-${{ matrix.package }}.zip
           if-no-files-found: error
