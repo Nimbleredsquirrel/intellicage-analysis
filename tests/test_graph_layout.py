@@ -196,11 +196,46 @@ def test_dense_hourly_marks_keep_all_hover_results_without_text_collisions():
     fit_figure(fig, 480, 600)
     marks = [n for n in fig.layout.annotations if n.name == 'stat']
     assert len(marks) == 48
-    assert any(n.text == '·' for n in marks)
+    assert any(n.visible is False for n in marks)
+    assert all(n.text != '·' for n in marks)
     assert all(n.hovertext for n in marks)
+    for trace in fig.data:
+        if trace.meta['role'] != 'mean': continue
+        assert '%{hovertext}' in trace.hovertemplate
+        assert len(trace.hovertext) == 48
+        assert all(f'hour: {hour}' in text and 'adjusted P' in text for hour, text in enumerate(trace.hovertext))
     assert fig.layout.meta[KEY]['dense']
     fit_figure(fig, 2400, 700)
-    assert all(n.text != '·' for n in fig.layout.annotations if n.name == 'stat')
+    assert all(n.text != '·' and n.visible is True for n in fig.layout.annotations if n.name == 'stat')
+
+
+def test_dense_ns_strip_is_one_summary_and_resizing_restores_labels():
+    fig = go.Figure(go.Scatter(x=list(range(168)), y=[1] * 168))
+    marks = []
+    for hour in range(168):
+        fig.add_annotation(name='stat', text='ns', x=hour, xref='x', showarrow=False, hovertext=f'hour {hour}: P=0.8')
+        marks.append({'index': hour, 'placement': 'strip', 'series': 'control|KO', 'text': 'ns',
+                      'position': (hour + .5) / 168, 'xref': 'x', 'yref': 'y'})
+    fig.add_annotation(name='stat-heading', text='control vs KO', showarrow=False)
+    fig.layout.meta = {KEY: {'marks': marks, 'strip_headings': [
+        {'index': 168, 'series': 'control|KO', 'text': 'control vs KO'}]}}
+    fit_figure(fig, 1200, 600)
+    assert 'ns for all 168 comparisons' in plain_text(fig.layout.annotations[-1].text)
+    assert all(n.visible is False for n in fig.layout.annotations if n.name == 'stat')
+    assert all(n.hovertext for n in fig.layout.annotations if n.name == 'stat')
+    # mixed results keep significant labels and leave space between labels
+    for index in (40, 42, 44): marks[index]['text'] = '**'
+    fig.layout.meta[KEY]['marks'] = marks
+    fit_figure(fig, 1200, 600)
+    assert 'all 168' not in fig.layout.annotations[-1].text
+    shown = [m for m in marks if fig.layout.annotations[m['index']].visible]
+    span = 1200 - fig.layout.margin.l - fig.layout.margin.r
+    positions = sorted(m['position'] * span for m in shown)
+    assert any(m['text'] == '**' for m in shown)
+    assert all(b - a > 2 * 14 * .65 + 16 for a, b in zip(positions, positions[1:]))
+    assert all(n.text != '·' for n in fig.layout.annotations)
+    fit_figure(fig, 8000, 600)
+    assert all(n.visible is True for n in fig.layout.annotations if n.name == 'stat')
 
 
 def test_wrapping_preserves_special_characters_and_respects_line_breaks():

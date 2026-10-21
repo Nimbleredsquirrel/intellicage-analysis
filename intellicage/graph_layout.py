@@ -102,7 +102,12 @@ def fit_figure(fig, width=None, height=None, patches=None):
     for heading in state.get('strip_headings', []):
         selected = [m for m in marks if m.get('placement') == 'strip' and m['series'] == heading['series']]
         if not selected: continue
-        text = wrap_text(heading['text'], width - left - right, font)
+        span = max(100, width - left - right)
+        label_widths = {m['index']: max(map(len, m['text'].split('<br>'))) * font * .65 + 16 for m in selected}
+        dense = sum(label_widths.values()) > span
+        all_ns = dense and all(m['text'] == 'ns' for m in selected)
+        heading_text = heading['text'] + (f' · ns for all {len(selected)} comparisons' if all_ns else '')
+        text = wrap_text(heading_text, span, font)
         note = fig.layout.annotations[heading['index']]
         values = {'text': text, 'x': 0, 'xref': 'paper', 'y': 0, 'yref': 'paper', 'xanchor': 'left',
                   'yanchor': 'top', 'yshift': -(axis_space + legend_space + strip_space + 12),
@@ -110,16 +115,23 @@ def fit_figure(fig, width=None, height=None, patches=None):
         for key, value in values.items():
             if not _locked(patches, f"annotations[{heading['index']}].{key}"): note.update({key: value})
         title_height_strip = (text.count('<br>') + 1) * 18
-        stride = max(1, math.ceil(len(selected) * 40 / max(100, width - left - right)))
-        strip_dense = strip_dense or stride > 1
-        for i, mark in enumerate(selected):
+        strip_dense = strip_dense or dense
+        occupied, shown = [], set()
+        # give significant labels room before adding ns labels
+        for mark in sorted(selected, key=lambda m: (m['text'].startswith('ns'), m['position'])):
+            half = label_widths[mark['index']] / 2
+            interval = (mark['position'] * span - half, mark['position'] * span + half)
+            if not all_ns and (not dense or all(interval[0] > end or interval[1] < start for start, end in occupied)):
+                shown.add(mark['index'])
+                occupied.append(interval)
+        for mark in selected:
             label = fig.layout.annotations[mark['index']]
-            values = {'text': mark['text'] if i % stride == 0 else '·', 'y': 0, 'yref': 'paper',
+            values = {'text': mark['text'], 'visible': mark['index'] in shown, 'y': 0, 'yref': 'paper',
                 'yshift': -(axis_space + legend_space + strip_space + 12 + title_height_strip),
-                'yanchor': 'top', 'font.size': font, 'font.weight': 700}
+                'xanchor': 'center', 'yanchor': 'top', 'font.size': font, 'font.weight': 700}
             for key, value in values.items():
                 if not _locked(patches, f"annotations[{mark['index']}].{key}"): label.update({key: value})
-        label_height = max(m['text'].count('<br>') + 1 for m in selected) * 18
+        label_height = max((m['text'].count('<br>') + 1 for m in selected if m['index'] in shown), default=0) * 18
         strip_space += title_height_strip + label_height + 12
     footer_space = strip_space
     footer_order = {'analysis-heading': 0, 'analysis-summary': 1, 'sample-size': 2}
@@ -223,12 +235,13 @@ def fit_figure(fig, width=None, height=None, patches=None):
             lane = series.index(mark['series']) if dense else mark['lane']
             y = 1 - reserved + (lane + .5) * reserved / count
             mark_font = 18 if set(mark['text']) == {'*'} else font
-            changes = {'y': y, 'yref': ref + ' domain', 'yshift': 4, 'yanchor': 'bottom',
+            changes = {'y': y, 'yref': ref + ' domain', 'yshift': 4, 'yanchor': 'bottom', 'visible': True,
                        'xanchor': 'center', 'font.size': mark_font, 'font.weight': 700}
             if dense:
                 # every comparison remains available on hover
                 stride = max(1, math.ceil(sum(m['yref'] == ref for m in marks) * 40 / max(100, width - left - right)))
-                changes['text'] = mark['text'] if mark['order'] % stride == 0 else '·'
+                changes['text'] = mark['text']
+                changes['visible'] = mark['order'] % stride == 0
             else:
                 changes['text'] = mark['text']
             for key, value in changes.items():

@@ -73,6 +73,7 @@ def annotate(a, result, settings):
                 elif len(groups) > 2:
                     identity = f'{ga} vs {gb}'
         hover = f"{ga} vs {gb}" + (f" · {row['period']}" if 'period' in row else '')
+        if level is not None: hover += f"<br>{a.get('by', 'level')}: {level}"
         hover += f"<br>{row.get('test', '')}<br>raw {S.fmt_p(row.get('p'))}<br>adjusted {S.fmt_p(row.get('p_adj', row.get('p')))}"
         fig.add_annotation(name='stat', text=label, x=x, xref=xref, y=.95, yref=yref + ' domain',
                            showarrow=False, hovertext=hover, align='center', font={'size': 12})
@@ -90,6 +91,16 @@ def annotate(a, result, settings):
         mark = next(m for m in marks if m['series'] == series)
         fig.add_annotation(name='stat-heading', text=mark['heading'], showarrow=False)
         headings.append({'index': len(fig.layout.annotations) - 1, 'series': series, 'text': mark['heading']})
+    details = {}
+    for mark in marks:
+        if mark['placement'] != 'strip': continue
+        note = fig.layout.annotations[mark['index']]
+        details.setdefault(note.x, []).append(note.hovertext)
+    for trace in fig.data:
+        if not details or not isinstance(trace.meta, dict) or trace.meta.get('role') != 'mean': continue
+        trace.hovertext = ['<br>'.join(details.get(x, [])) for x in trace.x]
+        if '%{hovertext}' not in (trace.hovertemplate or ''):
+            trace.hovertemplate = (trace.hovertemplate or '%{x}<br>%{y}<extra></extra>').replace('<extra>', '<br>%{hovertext}<extra>', 1)
     if settings.get('show_n', True) and 'sample_sizes' in stats:
         parts = []
         for group in stats['sample_sizes']['group'].unique(maintain_order=True):
