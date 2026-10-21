@@ -18,7 +18,6 @@ import polars as pl
 
 from .catalogue import analysis_name
 from .board import GraphBoard
-from .resize import resize_handle
 from .table_view import TableChoice, TablePreview
 from .metadata import METADATA_FILE, group_hint, validate_labels
 from .plots import PLOT_CONFIG, colors_for
@@ -145,9 +144,7 @@ class Explorer:
 .nicegui-content{max-width:1500px;margin:auto;padding:28px;width:100%}.q-drawer{background:#ffffff}
 h1,h2{letter-spacing:-.025em}.plotly-graph-div{border-radius:12px}.muted{color:#667085;font-size:13px}
 .chart-window{resize:both;overflow:hidden;flex:0 0 auto;max-width:100%;min-width:min(320px,100%);min-height:300px}
-.single-chart-window{position:relative;overflow:hidden;max-width:100%;min-width:min(300px,100%);min-height:300px;max-height:4000px;flex:none;display:flex}
-.single-chart-window .js-plotly-plot{min-height:0!important}
-.graph-resize-handle{position:absolute;right:0;bottom:0;z-index:20;padding:4px;background:#fff;border-radius:4px;cursor:nwse-resize;touch-action:none;user-select:none}
+.single-chart-window{min-width:min(326px,100%);min-height:326px;max-height:4026px}
 .dashboard-filters{background:#fff;border:1px solid #e1e4e8}
 .dashboard-selector .q-field__control{background:#f5f6f7;border-radius:8px}
 .dashboard-apply{background:#ffdb4d!important;color:#222!important;box-shadow:none}
@@ -574,40 +571,30 @@ h1,h2{letter-spacing:-.025em}.plotly-graph-div{border-radius:12px}.muted{color:#
         if result is None:
             with self.graph_area: ui.label('No graph for this selection. Choose other mice, groups, or windows.').classes('muted')
             return
+        figure = result['figure'].to_plotly_json()
+        width, height = figure['layout'].pop('width', None), figure['layout'].pop('height', 540)
+        figure['layout']['autosize'] = True
+        figure['config'] = {**PLOT_CONFIG, 'responsive': True}
+        # keep padding and borders outside the exported figure
+        inset = 26
         with self.graph_area:
-            with ui.card().classes('w-full p-2'):
-                figure = result['figure'].to_plotly_json()
-                width, height = figure['layout'].pop('width', None), figure['layout'].pop('height', 540)
-                figure['layout']['autosize'] = True
-                figure['config'] = {**PLOT_CONFIG, 'responsive': True}
-                with ui.element('div').classes('single-chart-window').style(
-                        f'width:{str(width) + "px" if width else "100%"};height:{height}px').mark('graph-window') as window:
+            with ui.card().classes('chart-window single-chart-window p-3 gap-0').style(
+                    f'width:{str(width + inset) + "px" if width else "100%"};height:{height + inset}px').mark('graph-window') as window:
+                with ui.element('div').classes('w-full grow min-h-0').style('position:relative'):
                     ui.element('q-resize-observer').props('debounce=0').on(
-                        'resize', lambda e: self.resize_graph(project, name, window, size_label, e.args, width_input, height_input),
+                        'resize', lambda e: self.resize_graph(project, name, window, e.args),
                         args=['width', 'height']).mark('graph-size')
                     plot = ui.plotly(figure).classes('w-full min-h-0').style('height:100%').mark('plot')
                     plot.on('plotly_relayout', lambda e: project.edit_layout(name, e.args))
                     plot.on('plotly_restyle', lambda e: project.edit_traces(name, e.args))
-                    resize_handle()
-                with ui.row().classes('w-full items-center gap-2'):
-                    ui.label('Drag the bottom-right corner to resize. Downloads keep this size.').classes('muted')
-                    size_label = ui.label(f'{width} × {height} px' if width else '').classes('muted').mark('graph-dimensions')
-                    width_input = ui.number('width · px', value=width, min=300, max=4000, step=10, format='%.0f').props('dense outlined').classes('w-28').mark('graph-width')
-                    height_input = ui.number('height · px', value=height, min=300, max=4000, step=10, format='%.0f').props('dense outlined').classes('w-28').mark('graph-height')
-                    def apply_size():
-                        size = {'width': width_input.value, 'height': height_input.value}
-                        if project.resize_graph(name, size):
-                            window.style(f'width:{round(width_input.value)}px;height:{round(height_input.value)}px')
-                            size_label.set_text(f'{round(width_input.value)} × {round(height_input.value)} px')
-                    ui.button('apply size', on_click=apply_size).props('flat dense').mark('apply-graph-size')
-                with ui.row().classes('w-full px-4'):
-                    ui.button('HTML', on_click=lambda: self.download_graph('html')).props('flat dense')
-                    ui.button('PNG', on_click=lambda: self.download_graph('png')).props('flat dense')
-                    ui.button('SVG', on_click=lambda: self.download_graph('svg')).props('flat dense')
-                    ui.button('graph data · CSV', on_click=lambda: ui.download.content(result['data'].write_csv(), f'{name}.csv')).props('flat dense')
-                    ui.button('Prism CSV + mouse IDs', on_click=lambda: self.download_prism(name, result)).props('flat dense').mark('prism-csv')
-                    ui.space()
-                    ui.label(f'{result["data"].height} observations · drag, zoom, edit labels').classes('muted')
+            with ui.row().classes('w-full items-center no-wrap gap-2').style('overflow-x:auto'):
+                ui.button('HTML', on_click=lambda: self.download_graph('html')).props('flat dense')
+                ui.button('PNG', on_click=lambda: self.download_graph('png')).props('flat dense')
+                ui.button('SVG', on_click=lambda: self.download_graph('svg')).props('flat dense')
+                ui.button('graph data · CSV', on_click=lambda: ui.download.content(result['data'].write_csv(), f'{name}.csv')).props('flat dense')
+                ui.button('Prism CSV + mouse IDs', on_click=lambda: self.download_prism(name, result)).props('flat dense').mark('prism-csv')
+                ui.space()
+                ui.label(f'{result["data"].height} observations').classes('muted whitespace-nowrap')
         with self.editor_area:
             with ui.expansion('edit this graph', icon='palette').classes('w-full bg-white rounded-xl'):
                 with ui.row().classes('w-full'):
@@ -656,13 +643,9 @@ h1,h2{letter-spacing:-.025em}.plotly-graph-div{border-radius:12px}.muted{color:#
                     self.grid(result['data'], name)
             statistics.on_value_change(show_statistics)
 
-    def resize_graph(self, project, name, window, label, size, width_input=None, height_input=None):
+    def resize_graph(self, project, name, window, size):
         if project is not self.project or name != self.name or window.is_deleted: return
-        if project.resize_graph(name, size):
-            saved = project.styles[name]['size']
-            label.set_text(f'{saved["width"]} × {saved["height"]} px')
-            if width_input is not None: width_input.set_value(saved['width'])
-            if height_input is not None: height_input.set_value(saved['height'])
+        project.resize_graph(name, size)
 
     @staticmethod
     def grid(table, name='table'):

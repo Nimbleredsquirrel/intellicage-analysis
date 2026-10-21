@@ -394,7 +394,6 @@ async def test_single_graph_size_follows_filters_project_and_downloads(config, t
         user.find(marker='graph-size').trigger('resize', {'width': 840, 'height': 420})
         user.find(marker='graph-size').trigger('resize', {'width': 0, 'height': 0})
         assert page.project.styles[name]['size'] == {'width': 840, 'height': 420}
-        assert user.find(marker='graph-dimensions').elements.pop().text == '840 × 420 px'
         plot = next(e for e in page.graph_area.descendants() if isinstance(e, ui.plotly))
         assert plot.figure['config']['toImageButtonOptions']['width'] is None
         assert plot.figure['config']['toImageButtonOptions']['height'] is None
@@ -403,9 +402,9 @@ async def test_single_graph_size_follows_filters_project_and_downloads(config, t
             page.group_checkboxes['ko'].set_value(False)
         await settled(page)
         window = next(e for e in page.graph_area.descendants() if 'single-chart-window' in e.classes)
-        assert window.style['width'] == '840px' and window.style['height'] == '420px'
+        assert window.style['width'] == '866px' and window.style['height'] == '446px'
         # old observer events must not resize the new plot
-        page.resize_graph(page.project, name, old_window, source_title, {'width': 600, 'height': 600})
+        page.resize_graph(page.project, name, old_window, {'width': 600, 'height': 600})
         assert page.project.result(name)['figure'].layout.width == 840
         with user.client: await page.download_graph('html')
         await asyncio.sleep(.02)
@@ -518,7 +517,7 @@ async def test_dashboard_phase_filter_updates_available_mice(config):
 
 
 @pytest.mark.asyncio
-async def test_explicit_graph_dimensions_resize_the_frame_and_exported_figure(config):
+async def test_graphs_uses_dashboard_card_resize_without_changing_controls(config):
     pages = []
     async def root():
         page = Explorer(None, local=True, native=True)
@@ -527,23 +526,22 @@ async def test_explicit_graph_dimensions_resize_the_frame_and_exported_figure(co
     async with user_simulation(root) as user:
         await user.open('/')
         page = pages[0]
-        width = next(e for e in page.graph_area.descendants() if isinstance(e, ui.number) and e.label == 'width · px')
-        height = next(e for e in page.graph_area.descendants() if isinstance(e, ui.number) and e.label == 'height · px')
-        with user.client:
-            width.set_value(750)
-            height.set_value(450)
-        user.find(marker='apply-graph-size').click()
-        frame = next(e for e in page.graph_area.descendants() if 'single-chart-window' in e.classes)
-        assert frame.style['width'] == '750px'
-        assert frame.style['height'] == '450px'
-        result = page.project.result(page.name)['figure']
-        assert (result.layout.width, result.layout.height) == (750, 450)
-        # the observer records the actual size after the frame fits the available space
-        user.find(marker='graph-size').trigger('resize', {'width': 720, 'height': 450})
-        assert width.value == 720 and height.value == 450
+        elements = list(page.graph_area.descendants())
+        frame = next(e for e in elements if 'single-chart-window' in e.classes)
+        assert isinstance(frame, ui.card) and 'chart-window' in frame.classes
+        assert not any(isinstance(e, ui.number) for e in elements)
+        assert not any('graph-resize-handle' in e.classes for e in elements)
+        labels = [e.text for e in elements if isinstance(e, ui.label)]
+        buttons = [e.text for e in elements if isinstance(e, ui.button)]
+        assert 'apply size' not in buttons
+        for width, height in [(750, 450), (720, 600), (840, 420)]:
+            user.find(marker='graph-size').trigger('resize', {'width': width, 'height': height})
+            figure = page.project.result(page.name)['figure']
+            assert (figure.layout.width, figure.layout.height) == (width, height)
+        assert list(page.graph_area.descendants()) == elements
+        assert [e.text for e in elements if isinstance(e, ui.label)] == labels
+        assert [e.text for e in elements if isinstance(e, ui.button)] == buttons
         with user.client: await page.download_graph('html')
         await asyncio.sleep(.02)
-        assert 'width:720px' in user.download.http_responses[-1].text
-        with user.client: width.set_value(None)
-        user.find(marker='apply-graph-size').click()
-        assert page.project.result(page.name)['figure'].layout.width == 720
+        assert 'width:840px' in user.download.http_responses[-1].text
+        assert 'height:420px' in user.download.http_responses[-1].text
