@@ -37,6 +37,30 @@ def test_mouse_summary_matches_prism(data):
     assert _mouse(s, 700, "licks_duration_per_visit_s") == pytest.approx(3.793764845)
 
 
+@pytest.mark.parametrize('analysis,expected', [
+    ({'table': 'mouse_summary', 'value': 'visits_n'}, ['P=0.0599']),
+    ({'table': 'mouse_summary', 'value': 'visits_duration_total_s'}, ['P=0.1347']),
+    ({'table': 'corner_summary', 'value': 'time_s', 'by': 'corner'}, ['P=0.1309', 'P=0.0104', 'P=0.0140']),
+])
+def test_graph_captions_match_pdf_results_with_black_comparison_brackets(data, analysis, expected):
+    from intellicage.inference import compute_results
+    from intellicage.pipeline import DEFAULT_SETTINGS
+    from intellicage.plots import colors_for
+    from intellicage.graph_layout import KEY
+
+    summary = M.mouse_summary if analysis['table'] == 'mouse_summary' else M.corner_summary
+    tables = {analysis['table']: pl.concat([summary(dataset) for dataset in data])}
+    result = next(iter(compute_results([analysis], tables, G, colors_for(G), DEFAULT_SETTINGS, {}).values()))
+    fig = result['figure']
+    source = fig.layout.meta[KEY]['footer_sources']['analysis-summary']['source']
+    assert [line.split(': ')[-1].split(' (')[0] for line in source.split('<br>')] == expected
+    caption = next(n for n in fig.layout.annotations if n.name == 'analysis-summary')
+    assert caption.font.weight == 400
+    assert all(f'<b>{p}</b>' in caption.text for p in expected)
+    brackets = [s for s in fig.layout.shapes if s.name == 'stat-bracket']
+    assert brackets and all(s.line.color == '#000000' and s.opacity == 1 for s in brackets)
+
+
 def test_corner_tables_match_prism(data):
     c, _ = data
     cs = M.corner_summary(c)

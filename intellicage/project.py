@@ -192,6 +192,9 @@ class Project:
                 trace.update(patch)
         from .graph_layout import fit_figure
         if style: fit_figure(result['figure'], patches=style.get('layout', {}))
+        if result['figure'].layout.width is None:
+            from .graph_layout import KEY
+            result['figure'].layout.width = (result['figure'].layout.meta or {}).get(KEY, {}).get('default_width', 900)
         return result
 
     def resize_graph(self, name, size):

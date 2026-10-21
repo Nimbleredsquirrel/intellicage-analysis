@@ -7,7 +7,7 @@ import polars as pl
 import pytest
 
 from intellicage import plots as P
-from intellicage.graph_layout import KEY, _data_limits, fit_figure, fit_plot, wrap_text
+from intellicage.graph_layout import KEY, _data_limits, fit_figure, fit_plot, plain_text, wrap_caption, wrap_text
 from intellicage.inference import compute_results
 from intellicage.pipeline import DEFAULT_SETTINGS
 from intellicage.project import Project
@@ -28,14 +28,50 @@ def test_default_prism_bracket_has_ns_and_exact_p_on_hover(tables):
     assert 'adjusted P' in mark.hovertext and 'raw P' in mark.hovertext
     bracket = [s for s in fig.layout.shapes if s.name == 'stat-bracket']
     assert len(bracket) == 3
-    assert all(s.line.width == 3 and s.line.color == '#111111' for s in bracket)
+    assert all(s.line.width == 3 and s.line.color == '#000000' and s.opacity == 1 and s.layer == 'above' for s in bracket)
     assert bracket[1].x0 == 0 and bracket[1].x1 == 1
     assert 0 < bracket[1].y0 < 1
     assert mark.yref == 'y domain'
     assert mark.y > 0
     assert fig.layout.yaxis.autorangeoptions.include > _data_limits(fig, 'y')[1]
     summary = next(n for n in fig.layout.annotations if n.name == 'analysis-summary')
-    assert 'Welch' in summary.text and 'ns' in summary.text and 'SEM' in summary.text
+    assert 'Welch' in summary.text and '<b>P=' in summary.text
+    assert 'ns' not in summary.text and 'SEM' not in summary.text
+
+
+def test_caption_wrap_keeps_only_p_values_bold_and_escapes_labels():
+    text = "• Control & KO: P<0.0001 (Welch's t test)"
+    wrapped = wrap_caption(text, 260, 16)
+    assert '<span style="color:#000000"><b>P&lt;0.0001</b></span>' in wrapped
+    assert '&amp;' in wrapped and '&#x27;' not in wrapped
+    assert plain_text(wrapped).replace('\n', ' ') == text
+    assert wrap_caption(wrapped, 260, 16) == wrapped
+
+
+@pytest.mark.parametrize('analysis,portrait', [
+    ({'table': 'mouse_summary', 'value': 'visits_n'}, True),
+    ({'table': 'corner_summary', 'value': 'time_s', 'by': 'corner'}, False),
+    ({'table': 'learning_by_day', 'value': 'correct_pct', 'by': 'day'}, False),
+])
+def test_default_proportions_follow_the_kind_of_graph(config, analysis, portrait):
+    config['analyses'] = [analysis]
+    project = Project(config)
+    name = next(iter(project.analyses))
+    from intellicage.catalogue import analysis_name
+    fig = project.result(analysis_name(name))['figure']
+    assert (fig.layout.height > fig.layout.width) == portrait
+    if portrait:
+        assert (fig.layout.width, fig.layout.height) == (480, 680)
+        assert not fig.layout.showlegend
+    else:
+        assert fig.layout.legend.orientation == 'v'
+        assert fig.layout.legend.x > 1 and fig.layout.margin.r >= 130
+    caption = next(n for n in fig.layout.annotations if n.name == 'analysis-summary')
+    assert caption.font.weight == 400
+    assert fig.layout.margin.l + caption.xshift == 16
+    project.resize_graph(analysis_name(name), {'width': 800, 'height': 550})
+    resized = project.result(analysis_name(name))['figure']
+    assert (resized.layout.width, resized.layout.height) == (800, 550)
 
 
 def test_ns_is_visible_only_for_estimable_non_significant_comparisons(tables):
@@ -56,7 +92,7 @@ def test_repeated_summary_separates_omnibus_from_pairwise(tables):
     summary = next(n for n in result['figure'].layout.annotations if n.name == 'analysis-summary')
     text = summary.text
     assert 'mixed ANOVA' in text
-    assert 'group: ns' in text and 'corner: ***' in text
+    assert 'group:' in text and 'corner:' in text and '<b>P=' in text
     assert 'pairwise:' not in text
     assert summary.yref == 'paper' and summary.y == 0 and summary.yshift < 0
 
@@ -66,7 +102,7 @@ def test_lower_caption_uses_pdf_heading_and_one_bullet_per_effect(tables, mode):
     from intellicage.graph_layout import plain_text
 
     fig = result_for({'table': 'corner_summary', 'value': 'time_s', 'by': 'corner',
-                      'title': 'Time spent in each corner'}, tables, significance=mode)['figure']
+                      'title': 'Time spent in each corner'}, tables, significance=mode, show_n=True)['figure']
     notes = {n.name: n for n in fig.layout.annotations if n.name in ('analysis-heading', 'analysis-summary', 'sample-size')}
     assert plain_text(notes['analysis-heading'].text) == 'Time spent in each corner'
     source = fig.layout.meta[KEY]['footer_sources']['analysis-summary']['source']
@@ -75,9 +111,10 @@ def test_lower_caption_uses_pdf_heading_and_one_bullet_per_effect(tables, mode):
     assert all(line.endswith('(Two-way mixed ANOVA)') for line in bullets)
     assert bullets[0].startswith('• group: ') and bullets[1].startswith('• corner: ')
     assert bullets[2].startswith('• Interaction: ')
-    assert ('P=' in source or 'P<' in source) == (mode != 'stars')
-    for note in notes.values():
-        assert note.font.weight == 700
+    assert 'P=' in source or 'P<' in source
+    assert notes['analysis-heading'].font.weight == 700
+    assert notes['analysis-summary'].font.weight == 400
+    assert '<b>P' in notes['analysis-summary'].text
     assert notes['analysis-summary'].font.size == 16
     assert notes['analysis-heading'].yshift > notes['analysis-summary'].yshift > notes['sample-size'].yshift
     fig.update_layout(title_text='Renamed corner comparison')
@@ -100,7 +137,7 @@ def test_significance_brackets_have_fixed_pixel_caps_and_centered_large_stars(ta
 
 def test_resizing_reflows_title_footer_and_preserves_source_and_dimensions(tables):
     title = 'Long title with lots of words for a meaningful comparison between the two experimental mouse groups'
-    fig = result_for({'table': 'mouse_summary', 'value': 'visits_n', 'title': title}, tables)['figure']
+    fig = result_for({'table': 'mouse_summary', 'value': 'visits_n', 'title': title}, tables, show_n=True)['figure']
     before = list(fig.data[0].y)
     fit_figure(fig, 420, 560)
     narrow = fig.layout.title.text
@@ -195,17 +232,19 @@ def test_layout_callback_keeps_plot_responsive_without_replacing_data(tables):
 
 
 @pytest.mark.parametrize('mode,expected', [('p', 'P='), ('stars', 'ns'), ('both', 'P=')])
-def test_statistical_mode_changes_all_labels_and_fonts_are_readable(tables, mode, expected):
+def test_statistical_mode_changes_plot_marks_while_caption_keeps_exact_p(tables, mode, expected):
     fig = result_for({'table': 'mouse_summary', 'value': 'visits_n'}, tables, significance=mode)['figure']
     footer = next(a for a in fig.layout.annotations if a.name == 'analysis-summary')
-    assert expected in footer.text
-    if mode == 'stars': assert 'P=' not in footer.text
+    mark = next(a for a in fig.layout.annotations if a.name == 'stat')
+    assert expected in mark.text
+    assert '<b>P=' in footer.text
     assert '&#x27;' not in footer.text
     assert fig.layout.font.weight == 700
     assert fig.layout.legend.font.weight == 700
     assert fig.layout.xaxis.tickfont.weight == 700
     assert fig.layout.yaxis.title.font.weight == 700
-    assert all(a.font.weight == 700 for a in fig.layout.annotations)
+    assert all(a.font.weight == 700 for a in fig.layout.annotations if a.name not in ('analysis-summary', 'sample-size'))
+    assert footer.font.weight == 400
     assert footer.font.size >= 14
 
 

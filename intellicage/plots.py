@@ -45,9 +45,11 @@ def _mouse_data(df):
     return df.select('animal', 'lot', 'phase').rows()
 
 
-def _finish(fig, title, ylabel, xlabel='', ylim=None):
+def _finish(fig, title, ylabel, xlabel='', ylim=None, *, size=(1000, 560), plot_height=260):
+    from .graph_layout import KEY, fit_figure
+
     fig.update_layout(template='simple_white', title={'text': title, 'x': .02, 'xanchor': 'left'},
-                      font={'family': 'Arial, sans-serif', 'size': 14, 'color': '#222222'}, height=540,
+                      font={'family': 'Arial, sans-serif', 'size': 14, 'color': '#000000'}, height=size[1],
                       margin={'l': 75, 'r': 30, 't': 85, 'b': 95}, hovermode='closest',
                       legend={'orientation': 'h', 'y': -0.22, 'x': 0},
                       xaxis_title=xlabel, yaxis_title=ylabel, paper_bgcolor='white', plot_bgcolor='white')
@@ -55,7 +57,7 @@ def _finish(fig, title, ylabel, xlabel='', ylim=None):
     fig.update_yaxes(showline=True, linewidth=1.5, ticks='outside', zeroline=False, rangemode='tozero')
     if ylim:
         fig.update_yaxes(range=ylim, autorange=False)
-    from .graph_layout import fit_figure
+    fig.layout.meta = {KEY: {'default_width': size[0], 'plot_height': plot_height, 'side_legend': bool(xlabel)}}
     return fit_figure(fig)
 
 
@@ -91,8 +93,10 @@ def column_plot(df, value, groups, colors, *, title, ylabel, pairwise=None, styl
                         customdata=_mouse_data(sub),
                         hovertemplate='mouse %{customdata[0]} · %{customdata[1]}<br>%{y:.5g}<extra></extra>')
     fig.update_xaxes(tickmode='array', tickvals=list(range(len(groups))), ticktext=groups)
+    fig.update_layout(showlegend=False)
     _test_note(fig, pairwise)
-    return _finish(fig, title, ylabel, ylim=ylim)
+    size = (480, 680) if len(groups) <= 3 else (max(640, len(groups) * 120), 640)
+    return _finish(fig, title, ylabel, ylim=ylim, size=size, plot_height=360)
 
 
 def grouped_plot(df, value, category, groups, colors, *, title, ylabel, xlabel='', category_labels=None,
@@ -125,7 +129,7 @@ def grouped_plot(df, value, category, groups, colors, *, title, ylabel, xlabel='
                                    y=1.04, yref='paper', showarrow=False, text=fmt_p(row.get('p_adj')),
                                    font={'size': 11})
     fig.update_layout(barmode='group', scattermode='group', scattergap=.5)
-    return _finish(fig, title, ylabel, xlabel, ylim)
+    return _finish(fig, title, ylabel, xlabel, ylim, size=(max(760, len(categories) * 150), 600), plot_height=300)
 
 
 def timecourse_plot(df, value, x, groups, colors, *, title, ylabel, xlabel='', x_labels=None, posthoc=None,
@@ -209,8 +213,9 @@ def latency_plot(df, value, groups, colors, *, title, ylabel='Latency (s)', pair
                             hovertemplate=('mouse %{customdata[0]} · %{customdata[1]}<br>no visit within %{y:.0f} s<extra></extra>'
                                            if censored else 'mouse %{customdata[0]} · %{customdata[1]}<br>%{y:.3f} s<extra></extra>'))
     fig.update_xaxes(tickmode='array', tickvals=list(range(len(groups))), ticktext=groups)
+    fig.update_layout(showlegend=df[value].null_count() > 0)
     _test_note(fig, pairwise)
-    return _finish(fig, title, ylabel, ylim=ylim)
+    return _finish(fig, title, ylabel, ylim=ylim, size=(480, 680), plot_height=360)
 
 
 def gate_raster(sessions, phase_starts, groups, colors, *, title):
@@ -238,6 +243,10 @@ def gate_raster(sessions, phase_starts, groups, colors, *, title):
 
 
 def save(fig: go.Figure, out_html: Path, out_png: Path | None = None):
+    from .graph_layout import KEY
+    fig = go.Figure(fig)
+    if fig.layout.width is None:
+        fig.layout.width = (fig.layout.meta or {}).get(KEY, {}).get('default_width', 900)
     fig.write_html(out_html, include_plotlyjs='directory', config=PLOT_CONFIG)
     if out_png is not None:
         fig.write_image(out_png, width=fig.layout.width or 900, height=fig.layout.height or 540, scale=PNG_SCALE)

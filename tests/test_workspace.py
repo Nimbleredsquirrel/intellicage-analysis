@@ -789,7 +789,8 @@ async def test_prism_mode_updates_immediately_and_annotation_editor_shows_plain_
         assert page.project.tables is tables
         assert page.project.result(page.name)['stats']['test'].equals(before)
         summary = next(n for n in page.project.result(page.name)['figure'].layout.annotations if n.name == 'analysis-summary')
-        assert 'ns' in summary.text and 'P=' not in summary.text
+        assert '<b>P=' in summary.text and summary.font.weight == 400
+        assert any(n.name == 'stat' and n.text == 'ns' for n in page.project.result(page.name)['figure'].layout.annotations)
         fields = [e for e in page.editor_area.descendants() if isinstance(e, ui.textarea) and e.props.get('label') == 'annotation']
         assert fields
         assert all('<br>' not in e.value and '&#x27;' not in e.value for e in fields)

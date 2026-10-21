@@ -12,8 +12,8 @@ KEY = 'intellicage_layout'
 
 
 def plain_text(text):
-    text = unescape(str(text or ''))
-    return re.sub(r'<[^>]+>', '', re.sub(r'<br\s*/?>', '\n', text, flags=re.I))
+    text = re.sub(r'<br\s*/?>', '\n', str(text or ''), flags=re.I)
+    return unescape(re.sub(r'</?[a-zA-Z][^>]*>', '', text))
 
 
 def plot_text(text):
@@ -21,10 +21,16 @@ def plot_text(text):
 
 
 def wrap_text(text, pixels, size):
-    plain = re.sub(r'<[^>]+>', '', re.sub(r'<br\s*/?>', '\n', str(text or ''), flags=re.I))
+    plain = plain_text(text)
     width = max(8, int(pixels / (size * .58)))
-    return '<br>'.join(escape(line, quote=False) for paragraph in unescape(plain).split('\n')
+    return '<br>'.join(escape(line, quote=False) for paragraph in plain.split('\n')
                       for line in (textwrap.wrap(paragraph, width=width, break_long_words=True) or ['']))
+
+
+def wrap_caption(text, pixels, size):
+    wrapped = wrap_text(text, pixels, size)
+    return re.sub(r'P(?:=|&lt;)\d+(?:\.\d+)?',
+                  lambda match: f'<span style="color:#000000"><b>{match[0]}</b></span>', wrapped)
 
 
 def _axis_name(ref):
@@ -54,9 +60,10 @@ def _locked(patches, path):
 def fit_figure(fig, width=None, height=None, patches=None):
     patches = patches or {}
     auto_height = height is None and fig.layout.width is None
-    width, height = float(width or fig.layout.width or 900), float(height or fig.layout.height or 540)
     meta = dict(fig.layout.meta or {})
     state = dict(meta.get(KEY, {}))
+    width = float(width or fig.layout.width or state.get('default_width', 900))
+    height = float(height or fig.layout.height or 540)
     font = 14
     title_size = fig.layout.title.font.size or 18
     if not _locked(patches, 'title.font.size'): title_size = 18
@@ -66,13 +73,15 @@ def fit_figure(fig, width=None, height=None, patches=None):
     state.update(title_source=title, title_wrapped=title_wrapped)
     updates = {'title.text': title_wrapped, 'title.font.size': title_size,
                'title.x': .5, 'title.xanchor': 'center', 'title.y': .985, 'title.yanchor': 'top',
-               'title.yref': 'container', 'title.automargin': False, 'title.font.weight': 700, 'font.size': font, 'font.weight': 700, 'font.color': '#111111', 'hoverlabel.font.size': font, 'hoverlabel.font.weight': 700}
+               'title.yref': 'container', 'title.automargin': False, 'title.font.weight': 700, 'font.size': font, 'font.weight': 700, 'font.color': '#000000', 'hoverlabel.font.size': font, 'hoverlabel.font.weight': 700}
     title_height = (title_wrapped.count('<br>') + 1) * title_size * 1.3
     left, right, top = max(60, min(85, width * .12)), 22, max(48, title_height + 24)
+    side_legend = state.get('side_legend', False) and fig.layout.showlegend is not False
+    if side_legend: right = max(130, min(220, width * .2))
     visible = [t for t in fig.data if t.showlegend is not False and t.visible is not False]
     legend_rows = 0
     if visible and fig.layout.showlegend is not False:
-        entry_width = max(90, min(180, (width - left - right) / 2))
+        entry_width = right - 12 if side_legend else max(90, min(180, (width - left - right) / 2))
         sources = state.setdefault('legend_sources', {})
         line_count = 1
         for i, trace in enumerate(fig.data):
@@ -86,7 +95,7 @@ def fit_figure(fig, width=None, height=None, patches=None):
         legend_rows = max(1, math.ceil(len(visible) * entry_width / max(100, width - left - right))) * line_count
     tick_lines = max([1, *(str(label).count('<br>') + 1 for label in (fig.layout.xaxis.ticktext or []))])
     axis_space = max(52, tick_lines * font * 1.2 + 30)
-    legend_space = legend_rows * (font * 1.5 + 7)
+    legend_space = 0 if side_legend else legend_rows * (font * 1.5 + 7)
     marks = state.get('marks', [])
     strip_space = 0
     strip_dense = False
@@ -123,11 +132,14 @@ def fit_figure(fig, width=None, height=None, patches=None):
         source = previous.get('source', note.text) if note.text == previous.get('wrapped') else note.text
         if note.name == 'analysis-heading' and not _locked(patches, f'annotations[{index}].text'):
             source = title
-        wrapped = wrap_text(source, width - left - right, footer_font)
+        wrap = wrap_caption if note.name == 'analysis-summary' else wrap_text
+        wrapped = wrap(source, width - 32, footer_font)
         sources[note.name] = {'source': source, 'wrapped': wrapped}
         values = {'text': wrapped, 'x': 0, 'xref': 'paper', 'y': 0, 'yref': 'paper', 'xanchor': 'left',
+                  'xshift': 16 - float(patches.get('margin.l', left)),
                   'yanchor': 'top', 'yshift': -(axis_space + legend_space + footer_space + 14),
-                  'font.size': footer_font, 'font.weight': 700, 'align': 'left'}
+                  'font.size': footer_font, 'font.weight': 700 if note.name == 'analysis-heading' else 400,
+                  'font.color': '#000000' if note.name == 'analysis-heading' else '#555555', 'align': 'left'}
         for key, value in values.items():
             if not _locked(patches, f'annotations[{index}].{key}'): note.update({key: value})
         footer_space += (wrapped.count('<br>') + 1) * footer_font * 1.4 + 8
@@ -138,19 +150,25 @@ def fit_figure(fig, width=None, height=None, patches=None):
                     'legend.entrywidthmode': 'pixels',
                     'margin.l': left, 'margin.r': right, 'margin.t': top, 'margin.b': bottom,
                     'legend.tracegroupgap': 0})
+    if side_legend:
+        updates.update({'legend.orientation': 'v', 'legend.x': 1.02, 'legend.y': 1,
+                        'legend.entrywidth': right - 12})
     for key, value in updates.items():
         if not _locked(patches, key): fig.update_layout({key: value})
     if auto_height:
         state.setdefault('base_height', height)
-        height = max(state['base_height'], float(fig.layout.margin.t) + float(fig.layout.margin.b) + 240)
+        height = max(state['base_height'], float(fig.layout.margin.t) + float(fig.layout.margin.b) + state.get('plot_height', 240))
         fig.layout.height = height
     # pixel shifts keep footnotes away from axes at every aspect ratio
     plot_height = max(45, height - float(fig.layout.margin.t) - float(fig.layout.margin.b))
-    if not _locked(patches, 'legend.y'):
+    if not side_legend and not _locked(patches, 'legend.y'):
         fig.layout.legend.y = -axis_space / plot_height
     fig.update_xaxes(automargin=True, tickfont={'weight': 700}, title_font={'weight': 700})
     fig.update_yaxes(automargin=True, tickfont={'weight': 700}, title_font={'weight': 700})
-    for note in fig.layout.annotations: note.font.weight = 700
+    for note in fig.layout.annotations:
+        if note.name not in ('analysis-summary', 'sample-size'):
+            note.font.weight = 700
+        if note.name == 'stat': note.font.color = '#000000'
     if not _locked(patches, 'xaxis.title.standoff'): fig.update_xaxes(title_standoff=12)
     if not _locked(patches, 'yaxis.title.standoff'): fig.update_yaxes(title_standoff=14)
     sources = state.setdefault('axis_sources', {})
@@ -221,7 +239,7 @@ def fit_figure(fig, width=None, height=None, patches=None):
                                        (mark['x0'], mark['x1'], y, y), (mark['x1'], mark['x1'], y, y - cap)]:
                     shapes.append(go.layout.Shape(name='stat-bracket', type='line', xref=mark['xref'],
                         yref=ref + ' domain', x0=x0, x1=x1, y0=y0, y1=y1,
-                        line={'color': '#111111', 'width': 3}))
+                        line={'color': '#000000', 'width': 3}, opacity=1, layer='above'))
     fig.layout.shapes = tuple(shapes)
     state['axis_includes'] = includes
     state['dense'] = strip_dense or any(dense_panels)

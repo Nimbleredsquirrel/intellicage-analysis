@@ -91,7 +91,7 @@ def test_pairs_join_full_mouse_identity_and_cycle_and_reject_duplicates():
 def test_paired_view_segments_have_two_values_from_one_mouse_and_keeps_facet_titles():
     data = pairs_data()
     a = {'table': 'activity_periods', 'value': 'y', 'by': 'day', 'plot': 'period_timecourse'}
-    settings = {**DEFAULT_SETTINGS, 'period_style': 'paired', 'error': 'ci95', 'significance': 'stars', 'show_ns': True}
+    settings = {**DEFAULT_SETTINGS, 'period_style': 'paired', 'error': 'ci95', 'significance': 'stars', 'show_ns': True, 'show_n': True}
     result = compute_results([a], {'activity_periods': data}, ['a', 'b'], P.colors_for(['a', 'b']), settings, {})[analysis_name(a)]
     fig = result['figure']
     for trace in fig.data:

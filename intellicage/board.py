@@ -281,10 +281,13 @@ class GraphBoard:
         result = results.get(name)
         if name in self.auto_height and result:
             import plotly.graph_objects as go
-            from .graph_layout import fit_figure
+            from .graph_layout import KEY, fit_figure
             preview = go.Figure(result['figure'])
+            defaults = (preview.layout.meta or {}).get(KEY, {})
+            panel['width'] = min(4000, defaults.get('default_width', 480) + 26)
+            panel['height'] = max(panel['height'], preview.layout.height + 74)
             fit_figure(preview, panel['width'] - 26, panel['height'] - 74)
-            panel['height'] = max(panel['height'], min(4000, math.ceil(preview.layout.margin.t + preview.layout.margin.b + 240 + 74)))
+            panel['height'] = max(panel['height'], min(4000, math.ceil(preview.layout.margin.t + preview.layout.margin.b + defaults.get('plot_height', 240) + 74)))
             self.auto_height.discard(name)
         with ui.card().classes('chart-window p-3 gap-2').style(
             f'width:{panel["width"]}px;height:{panel["height"]}px').mark(f'chart-window-{name}') as card:

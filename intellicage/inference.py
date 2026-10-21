@@ -103,21 +103,15 @@ def annotate(a, result, settings):
         lines = []
         omnibus = stats.get('omnibus', pl.DataFrame())
         if omnibus.height:
-            mode = settings.get('significance', 'stars')
             for row in omnibus.to_dicts():
-                label = significance_label(row['p'], mode, settings.get('show_ns', True)).replace('<br>', ' · ')
-                if label:
-                    effect = 'Interaction' if ' * ' in row['effect'] else row['effect']
-                    lines.append(f"• {effect}: {label} ({row['test']})")
-            if mode == 'none': lines.append(omnibus['test'][0])
+                effect = 'Interaction' if ' * ' in row['effect'] else row['effect']
+                lines.append(f"• {effect}: {S.fmt_p(row['p'])} ({row['test']})")
         elif comparisons.height:
             rows = [r for r in comparisons.to_dicts() if r.get('group_a') != 'all']
             if rows and not a.get('by'):
                 for r in rows:
-                    label = significance_label(r.get('p_adj', r.get('p')), settings.get('significance', 'stars'), settings.get('show_ns', True))
-                    if label: lines.append(f"• {r['group_a']} vs {r['group_b']}: {label.replace('<br>', ' · ')} ({r['test']})")
-        if a.get('value') and a.get('plot') != 'latency':
-            lines.append('mean ± ' + {'sem': 'SEM', 'sd': 'SD', 'ci95': '95% CI'}[a.get('error', settings['error'])])
+                    label = S.fmt_p(r.get('p_adj', r.get('p')))
+                    lines.append(f"• {r['group_a']} vs {r['group_b']}: {label} ({r['test']})")
         if lines:
             fig.add_annotation(name='analysis-heading', text=fig.layout.title.text, showarrow=False)
             fig.add_annotation(name='analysis-summary', text='<br>'.join(lines), showarrow=False)

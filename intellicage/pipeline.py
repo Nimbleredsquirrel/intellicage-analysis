@@ -25,7 +25,7 @@ DEFAULT_SETTINGS = {'light_on': 8, 'light_off': 20, 'latency_window_min': None, 
                     'test': 'welch', 'repeated_test': 'mixed_anova', 'posthoc': 'welch', 'padjust': 'sidak',
                     'bar_style': 'bar', 'error': 'sem', 'include_partial_periods': False,
                     'gate_complete_only': False, 'export_images': False, 'significance': 'stars', 'show_ns': True,
-                    'show_test_summary': True, 'show_n': True, 'family_scope': 'graph', 'period_style': 'timecourse'}
+                    'show_test_summary': True, 'show_n': False, 'family_scope': 'graph', 'period_style': 'timecourse'}
 TABLES = ['mouse_summary', 'corner_summary', 'learning_by_day', 'activity_hourly', 'activity_elapsed',
           'activity_circadian', 'activity_periods', 'activity_light_dark', 'latency', 'gate_sessions',
           'gate_summary', 'gate_hourly']
