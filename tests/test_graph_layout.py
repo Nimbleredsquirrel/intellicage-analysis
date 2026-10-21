@@ -7,6 +7,7 @@ import polars as pl
 import pytest
 
 from intellicage import plots as P
+from intellicage import stats as S
 from intellicage.graph_layout import (KEY, _data_limits, comparison_settings, fit_figure, fit_plot,
                                     plain_text, style_comparisons, wrap_caption, wrap_text)
 from intellicage.inference import compute_results
@@ -187,16 +188,32 @@ def test_overlapping_three_group_comparisons_use_different_lanes(tables):
     assert len({n.y for n in fig.layout.annotations if n.name == 'stat'}) == 3
 
 
-def test_dense_hourly_marks_keep_all_hover_results_without_text_collisions():
+def test_dense_hourly_marks_keep_all_hover_results_without_text_collisions(monkeypatch):
     rng = np.random.default_rng(8)
     data = pl.DataFrame([{'group': g, 'lot': g, 'phase': 'p', 'animal': animal, 'hour': hour,
                          'y': 10 + rng.normal() + hour / 10}
                         for g in ['control', 'ko'] for animal in range(4) for hour in range(48)])
+    # layout checks use fixed results, not an optimizer
+    omnibus = pl.DataFrame([{'metric': 'y', 'test': 'LMM', 'effect': 'group', 'p': .8, 'note': ''}],
+                          schema=S.OMNIBUS_SCHEMA)
+    posthoc = pl.DataFrame([{'level': str(hour), 'group_a': 'control', 'group_b': 'ko',
+                            'test': "Welch's t test", 'p': .001 if hour % 12 == 0 else .8,
+                            'p_adj': .048 if hour % 12 == 0 else 1.}
+                           for hour in range(48)])
+
+    def fixed_results(df, value, within, groups, test, posthoc_test, padjust):
+        assert df.height == 384
+        assert (value, within, groups, test) == ('y', 'hour', ['control', 'ko'], 'lmm')
+        return omnibus, posthoc
+
+    monkeypatch.setattr(S, 'repeated_measures', fixed_results)
     a = {'table': 'activity_elapsed', 'value': 'y', 'by': 'hour'}
     fig = result_for(a, {'activity_elapsed': data}, repeated_test='lmm')['figure']
     fit_figure(fig, 480, 600)
     marks = [n for n in fig.layout.annotations if n.name == 'stat']
     assert len(marks) == 48
+    assert sum(n.text == '*' for n in marks) == 4
+    assert sum(n.text == 'ns' for n in marks) == 44
     assert any(n.visible is False for n in marks)
     assert all(n.text != '·' for n in marks)
     assert all(n.hovertext for n in marks)
