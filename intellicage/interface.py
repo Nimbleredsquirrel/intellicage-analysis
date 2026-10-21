@@ -18,6 +18,7 @@ import polars as pl
 
 from .catalogue import analysis_name
 from .board import GraphBoard
+from .resize import resize_handle
 from .table_view import TableChoice, TablePreview
 from .metadata import METADATA_FILE, group_hint, validate_labels
 from .plots import PLOT_CONFIG, colors_for
@@ -144,8 +145,12 @@ class Explorer:
 .nicegui-content{max-width:1500px;margin:auto;padding:28px;width:100%}.q-drawer{background:#ffffff}
 h1,h2{letter-spacing:-.025em}.plotly-graph-div{border-radius:12px}.muted{color:#667085;font-size:13px}
 .chart-window{resize:both;overflow:hidden;flex:0 0 auto;max-width:100%;min-width:min(320px,100%);min-height:300px}
-.single-chart-window{resize:both;overflow:hidden;max-width:100%;min-width:min(300px,100%);min-height:300px;max-height:4000px;flex:none;display:flex}
+.single-chart-window{position:relative;overflow:hidden;max-width:100%;min-width:min(300px,100%);min-height:300px;max-height:4000px;flex:none;display:flex}
 .single-chart-window .js-plotly-plot{min-height:0!important}
+.graph-resize-handle{position:absolute;right:0;bottom:0;z-index:20;padding:4px;background:#fff;border-radius:4px;cursor:nwse-resize;touch-action:none;user-select:none}
+.dashboard-filters{background:#fff;border:1px solid #e1e4e8}
+.dashboard-selector .q-field__control{background:#f5f6f7;border-radius:8px}
+.dashboard-apply{background:#ffdb4d!important;color:#222!important;box-shadow:none}
 .chart-drag-handle{touch-action:none}.chart-window .js-plotly-plot{min-height:0!important}
 .nicegui-tab-panel{padding:0;overflow:visible}.q-expansion-item{flex-shrink:0}''')
         with ui.header().classes('bg-white text-primary border-b items-center px-6'):
@@ -210,6 +215,7 @@ h1,h2{letter-spacing:-.025em}.plotly-graph-div{border-radius:12px}.muted{color:#
                 self.table_select = TableChoice(self.show_table)
                 self.table_content = ui.column().classes('w-full min-w-0').mark('table-preview')
         self.task_controls = [self.new_button, self.save_button, self.export_button, self.section, self.graph_select, self.analysis_view]
+        self.task_controls.extend(self.board.filters.controls)
         self.task_controls.extend(button for button in [self.folder_button, self.open_button, self.board.apply_button] if button is not None)
 
     def show_folders(self):
@@ -577,14 +583,23 @@ h1,h2{letter-spacing:-.025em}.plotly-graph-div{border-radius:12px}.muted{color:#
                 with ui.element('div').classes('single-chart-window').style(
                         f'width:{str(width) + "px" if width else "100%"};height:{height}px').mark('graph-window') as window:
                     ui.element('q-resize-observer').props('debounce=0').on(
-                        'resize', lambda e: self.resize_graph(project, name, window, size_label, e.args),
+                        'resize', lambda e: self.resize_graph(project, name, window, size_label, e.args, width_input, height_input),
                         args=['width', 'height']).mark('graph-size')
                     plot = ui.plotly(figure).classes('w-full min-h-0').style('height:100%').mark('plot')
                     plot.on('plotly_relayout', lambda e: project.edit_layout(name, e.args))
                     plot.on('plotly_restyle', lambda e: project.edit_traces(name, e.args))
+                    resize_handle()
                 with ui.row().classes('w-full items-center gap-2'):
                     ui.label('Drag the bottom-right corner to resize. Downloads keep this size.').classes('muted')
                     size_label = ui.label(f'{width} × {height} px' if width else '').classes('muted').mark('graph-dimensions')
+                    width_input = ui.number('width · px', value=width, min=300, max=4000, step=10, format='%.0f').props('dense outlined').classes('w-28').mark('graph-width')
+                    height_input = ui.number('height · px', value=height, min=300, max=4000, step=10, format='%.0f').props('dense outlined').classes('w-28').mark('graph-height')
+                    def apply_size():
+                        size = {'width': width_input.value, 'height': height_input.value}
+                        if project.resize_graph(name, size):
+                            window.style(f'width:{round(width_input.value)}px;height:{round(height_input.value)}px')
+                            size_label.set_text(f'{round(width_input.value)} × {round(height_input.value)} px')
+                    ui.button('apply size', on_click=apply_size).props('flat dense').mark('apply-graph-size')
                 with ui.row().classes('w-full px-4'):
                     ui.button('HTML', on_click=lambda: self.download_graph('html')).props('flat dense')
                     ui.button('PNG', on_click=lambda: self.download_graph('png')).props('flat dense')
@@ -641,11 +656,13 @@ h1,h2{letter-spacing:-.025em}.plotly-graph-div{border-radius:12px}.muted{color:#
                     self.grid(result['data'], name)
             statistics.on_value_change(show_statistics)
 
-    def resize_graph(self, project, name, window, label, size):
+    def resize_graph(self, project, name, window, label, size, width_input=None, height_input=None):
         if project is not self.project or name != self.name or window.is_deleted: return
         if project.resize_graph(name, size):
             saved = project.styles[name]['size']
             label.set_text(f'{saved["width"]} × {saved["height"]} px')
+            if width_input is not None: width_input.set_value(saved['width'])
+            if height_input is not None: height_input.set_value(saved['height'])
 
     @staticmethod
     def grid(table, name='table'):

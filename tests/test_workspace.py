@@ -424,3 +424,126 @@ async def test_single_graph_size_follows_filters_project_and_downloads(config, t
         with user.client: await page.install(Project.open(page.project.save(), tmp_path/'resized'))
         assert page.project.result(name)['figure'].layout.width == 840
         assert page.project.result(name)['figure'].layout.height == 420
+
+
+@pytest.mark.asyncio
+async def test_dashboard_filter_group_batches_changes_and_syncs_with_sidebar(config, tmp_path):
+    pages = []
+    async def root():
+        page = Explorer(None, local=True, native=True)
+        pages.append(page)
+        await page.install(Project(config))
+    async with user_simulation(root) as user:
+        await user.open('/')
+        page = pages[0]
+        board, project = page.board, page.project
+        names = [analysis_name(a) for a in project.analyses[:2]]
+        with user.client:
+            for name in names: board.add(name)
+            page.workspace_tabs.set_value('page')
+        await settled(page)
+        filters = board.filters
+        assert filters.groups.value == ['control', 'ko']
+        assert len(filters.mice.value) == 6
+        with user.client: filters.groups.set_value(['control'])
+        assert len(filters.mice.value) == 3
+        assert project.selection['groups'] == ['control', 'ko']
+        assert all(groups(plot) == {'control', 'ko'} for plot in board.plots.values())
+        assert filters.status.text == 'not applied'
+        kept = filters.mice.value[:2]
+        with user.client: filters.mice.set_value(kept)
+        user.find(marker='dashboard-filter-apply').click()
+        await settled(page)
+        assert project.selection['groups'] == ['control']
+        assert len(project.selection['exclude_mice']) == 1
+        assert not page.group_checkboxes['ko'].value
+        assert sum(bool(b.value) for b in page.mouse_checkboxes.values()) == 2
+        assert all(groups(plot) == {'control'} for plot in board.plots.values())
+        assert not filters.status.text
+        assert filters.mouse_summary.text == '2 of 3 selected'
+        with user.client:
+            page.group_checkboxes['ko'].set_value(True)
+        await settled(page)
+        assert filters.groups.value == ['control', 'ko']
+        assert filters.mouse_summary.text == '5 of 6 selected'
+        user.find(marker='dashboard-filter-reset').click()
+        assert len(project.selection['exclude_mice']) == 1
+        assert len(filters.mice.value) == 6
+        user.find(marker='dashboard-filter-apply').click()
+        await settled(page)
+        assert project.selection['exclude_mice'] == []
+        with user.client: filters.mice.set_value([])
+        user.find(marker='dashboard-filter-apply').click()
+        await settled(page)
+        assert len(project.selection['exclude_mice']) == 6
+        assert all(not plot.figure['data'] for plot in board.plots.values())
+        with user.client: filters.groups.set_value([])
+        user.find(marker='dashboard-filter-apply').click()
+        await settled(page)
+        assert project.selection['groups'] == []
+        assert filters.group_summary.text == 'none selected'
+        user.find(marker='dashboard-filter-reset').click()
+        user.find(marker='dashboard-filter-apply').click()
+        await settled(page)
+        with user.client: await page.install(Project.open(project.save(), tmp_path/'filters'))
+        assert filters.groups.value == ['control', 'ko']
+        assert len(filters.mice.value) == 6
+        with user.client: page.new_project()
+        assert not filters.groups.options and not filters.mice.options
+        assert not filters.apply_button.enabled
+
+
+@pytest.mark.asyncio
+async def test_dashboard_phase_filter_updates_available_mice(config):
+    config['datasets'][1]['phase'] = 'phase 2'
+    pages = []
+    async def root():
+        page = Explorer(None, local=True, native=True)
+        pages.append(page)
+        await page.install(Project(config))
+    async with user_simulation(root) as user:
+        await user.open('/')
+        page = pages[0]
+        with user.client: page.workspace_tabs.set_value('page')
+        await settled(page)
+        filters = page.board.filters
+        assert filters.phase.options == ['phase 1', 'phase 2']
+        with user.client: filters.phase.set_value('phase 2')
+        assert {m['group'] for m in filters.mouse_records.values()} == {'ko'}
+        assert page.project.selection['phases'] == ['phase 1']
+        user.find(marker='dashboard-filter-apply').click()
+        await settled(page)
+        assert page.phase_select.value == 'phase 2'
+        assert page.project.selection['phases'] == ['phase 2']
+
+
+@pytest.mark.asyncio
+async def test_explicit_graph_dimensions_resize_the_frame_and_exported_figure(config):
+    pages = []
+    async def root():
+        page = Explorer(None, local=True, native=True)
+        pages.append(page)
+        await page.install(Project(config))
+    async with user_simulation(root) as user:
+        await user.open('/')
+        page = pages[0]
+        width = next(e for e in page.graph_area.descendants() if isinstance(e, ui.number) and e.label == 'width · px')
+        height = next(e for e in page.graph_area.descendants() if isinstance(e, ui.number) and e.label == 'height · px')
+        with user.client:
+            width.set_value(750)
+            height.set_value(450)
+        user.find(marker='apply-graph-size').click()
+        frame = next(e for e in page.graph_area.descendants() if 'single-chart-window' in e.classes)
+        assert frame.style['width'] == '750px'
+        assert frame.style['height'] == '450px'
+        result = page.project.result(page.name)['figure']
+        assert (result.layout.width, result.layout.height) == (750, 450)
+        # the observer records the actual size after the frame fits the available space
+        user.find(marker='graph-size').trigger('resize', {'width': 720, 'height': 450})
+        assert width.value == 720 and height.value == 450
+        with user.client: await page.download_graph('html')
+        await asyncio.sleep(.02)
+        assert 'width:720px' in user.download.http_responses[-1].text
+        with user.client: width.set_value(None)
+        user.find(marker='apply-graph-size').click()
+        assert page.project.result(page.name)['figure'].layout.width == 720

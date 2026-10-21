@@ -6,6 +6,7 @@ from nicegui import ui
 
 from .plots import PLOT_CONFIG
 from .catalogue import analysis_name
+from .dashboard_filters import DashboardFilters
 
 
 class GraphBoard:
@@ -19,6 +20,7 @@ class GraphBoard:
             self.count = ui.label().classes('muted')
             ui.space()
             ui.button('choose graphs', icon='add_chart', on_click=self.open_picker).mark('dashboard-choose')
+        self.filters = DashboardFilters(owner)
         ui.label('Drag by the handle to reorder; drag the bottom-right corner to resize.').classes('muted')
         with ui.dialog() as self.picker:
             with ui.card().classes('w-full max-w-2xl gap-3').style('width:680px;max-height:85vh'):
@@ -27,7 +29,7 @@ class GraphBoard:
                     ui.button(icon='close', on_click=self.picker.close).props('flat round dense').tooltip('cancel')
                 ui.label('Edits follow each graph. Removing a graph keeps its title, legend and colours.').classes('muted')
                 with ui.row().classes('w-full items-center'):
-                    self.search = ui.input('search graphs', on_change=lambda: self.refresh_picker()).props('clearable dense').classes('grow').mark('dashboard-search')
+                    self.search = ui.input('search graphs', on_change=lambda: self.refresh_picker()).props('clearable outlined dense').classes('grow dashboard-selector').mark('dashboard-search')
                     self.edited_only = ui.checkbox('edited only', on_change=lambda: self.refresh_picker()).mark('dashboard-edited-only')
                 self.choices = ui.column().classes('w-full gap-1').style('min-height:120px;max-height:50vh;overflow-y:auto;display:block')
                 ui.separator()
@@ -63,6 +65,7 @@ class GraphBoard:
                 item[key] = max(minimum, min(4000, int(value))) if isinstance(value, (int, float)) and math.isfinite(value) else default
             valid.append(item)
         self.owner.project.cfg['workspace'] = {'charts': valid}
+        self.filters.sync()
         self.update_count()
         self.refresh_picker()
 
@@ -72,6 +75,7 @@ class GraphBoard:
         if self.owner.project is not self.selection_project:
             self.picker.close()
             self.draft = None
+        self.filters.sync()
         self.update_count()
         self.refresh_picker()
         with self.container: ui.label('No graphs yet. Use “choose graphs” to build your dashboard.').classes('muted')
@@ -164,6 +168,7 @@ class GraphBoard:
             ui.notify('This graph is already on dashboard', type='info')
             return
         self.panels.append({'name': name, 'width': 480, 'height': 520})
+        self.filters.sync()
         self.update_count()
         self.refresh_picker()
         ui.notify('Added to dashboard', type='positive')
