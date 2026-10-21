@@ -226,7 +226,7 @@ class Project:
                 cfg['datasets'][i]['path'] = prefix
                 for path in sorted(ds.path.rglob('*.txt')):
                     archive.write(path, f'{prefix}/{path.relative_to(ds.path).as_posix()}')
-            manifest = {'format': 'intellicage-project', 'version': 1, 'config': cfg,
+            manifest = {'format': 'intellicage-project', 'version': 1, 'display_version': 1, 'config': cfg,
                         'provenance': run_metadata(self.datasets, self.configuration())}
             archive.writestr('project.json', json.dumps(manifest, ensure_ascii=False, indent=2))
         return buffer.getvalue()
@@ -238,6 +238,9 @@ class Project:
         if manifest.get('format') != 'intellicage-project' or manifest.get('version') != 1:
             raise ValueError('Unsupported project format')
         cfg = manifest['config']
+        # older projects inherited hidden non-significant comparisons
+        if manifest.get('display_version', 0) < 1:
+            cfg.setdefault('settings', {})['show_ns'] = True
         import hashlib
         for dataset, provenance in zip(cfg['datasets'], manifest['provenance']['datasets'], strict=True):
             path = destination / safe_name(dataset['path'])

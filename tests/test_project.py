@@ -177,3 +177,21 @@ def test_resized_figures_keep_dimensions_in_exports_without_changing_cache(proje
         assert figure['layout']['height'] == 406
         html = archive.read(f'figures/html/{name}.html').decode()
         assert 'width:815px' in html and 'height:406px' in html
+
+
+@pytest.mark.parametrize('legacy', [True, False])
+def test_ns_default_updates_old_projects_and_preserves_new_explicit_choice(config, tmp_path, legacy):
+    project = Project(config)
+    assert project.cfg['settings']['show_ns'] is True
+    project.rebuild({'show_ns': False})
+    output = io.BytesIO()
+    with zipfile.ZipFile(io.BytesIO(project.save())) as source, zipfile.ZipFile(output, 'w') as target:
+        for name in source.namelist():
+            content = source.read(name)
+            if legacy and name == 'project.json':
+                manifest = json.loads(content)
+                manifest.pop('display_version')
+                content = json.dumps(manifest).encode()
+            target.writestr(name, content)
+    restored = Project.open(output.getvalue(), tmp_path / 'restored')
+    assert restored.cfg['settings']['show_ns'] is legacy
