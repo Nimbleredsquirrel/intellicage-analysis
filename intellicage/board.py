@@ -194,11 +194,16 @@ class GraphBoard:
         if not self.owner.project or (source is not None and self.cards.get(name) is not source): return
         panel = next((p for p in self.panels if p['name'] == name), None)
         if panel is None: return
+        previous = (panel['width'], panel['height'])
         for key in ('width', 'height'):
             value = size.get(key)
             if isinstance(value, (int, float)) and math.isfinite(value) and value >= 300:
                 panel[key] = min(4000, round(value))
         if card := self.cards.get(name): card.style(f'width:{panel["width"]}px;height:{panel["height"]}px')
+        if previous != (panel['width'], panel['height']) and name in self.plots:
+            from .graph_layout import fit_plot
+            fit_plot(self.plots[name], panel['width'] - 26, panel['height'] - 74,
+                     self.owner.project.styles.get(name, {}).get('layout', {}))
 
     def render(self, project, results):
         self.container.clear()
@@ -235,7 +240,8 @@ class GraphBoard:
             self.cards[name] = card
             with ui.row().classes('w-full items-center no-wrap shrink-0 gap-1'):
                 ui.icon('drag_indicator').classes('chart-drag-handle cursor-grab p-1').tooltip('drag to reorder')
-                title = result['figure'].layout.title.text if result else name
+                from .graph_layout import KEY
+                title = (result['figure'].layout.meta or {}).get(KEY, {}).get('title_source', result['figure'].layout.title.text) if result else name
                 self.titles[name] = ui.label(title or name).classes('grow text-sm truncate')
                 self.badges[name] = ui.badge('edited').props('outline')
                 self.badges[name].set_visibility(self.is_edited(name))
@@ -255,3 +261,5 @@ class GraphBoard:
             plot.on('plotly_relayout', lambda e, name=name: self.edited(project, name, 'layout', e.args))
             plot.on('plotly_restyle', lambda e, name=name: self.edited(project, name, 'traces', e.args))
             self.plots[name] = plot
+            from .graph_layout import fit_plot
+            fit_plot(plot, panel['width'] - 26, panel['height'] - 74, project.styles.get(name, {}).get('layout', {}))

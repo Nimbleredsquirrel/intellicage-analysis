@@ -169,6 +169,8 @@ class Project:
         for trace in result['figure'].data:
             if patch := style.get('traces', {}).get(trace_key(trace)):
                 trace.update(patch)
+        from .graph_layout import fit_figure
+        if style: fit_figure(result['figure'], patches=style.get('layout', {}))
         return result
 
     def resize_graph(self, name, size):

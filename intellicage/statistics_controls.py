@@ -17,7 +17,7 @@ def statistics_controls(settings):
     for key, label, options in OPTIONS:
         fields[key] = ui.select(options, label=label, value=settings[key]).props(
             'outlined dense stack-label options-dense').classes('w-44 dashboard-selector')
-    for key, label in [('show_n', 'show number of mice'), ('show_ns', 'show non-significant results')]:
+    for key, label in [('show_n', 'show number of mice'), ('show_ns', 'show non-significant results'), ('show_test_summary', 'show test summary')]:
         fields[key] = ui.checkbox(label, value=settings[key])
     return fields
 

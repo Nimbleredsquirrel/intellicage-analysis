@@ -24,8 +24,8 @@ from .timebins import period_windows
 DEFAULT_SETTINGS = {'light_on': 8, 'light_off': 20, 'latency_window_min': None, 'min_day_hours': 12,
                     'test': 'welch', 'repeated_test': 'mixed_anova', 'posthoc': 'welch', 'padjust': 'sidak',
                     'bar_style': 'bar', 'error': 'sem', 'include_partial_periods': False,
-                    'gate_complete_only': False, 'export_images': False, 'significance': 'p', 'show_ns': False,
-                    'show_n': True, 'family_scope': 'graph', 'period_style': 'timecourse'}
+                    'gate_complete_only': False, 'export_images': False, 'significance': 'stars', 'show_ns': True,
+                    'show_test_summary': True, 'show_n': True, 'family_scope': 'graph', 'period_style': 'timecourse'}
 TABLES = ['mouse_summary', 'corner_summary', 'learning_by_day', 'activity_hourly', 'activity_elapsed',
           'activity_circadian', 'activity_periods', 'activity_light_dark', 'latency', 'gate_sessions',
           'gate_summary', 'gate_hourly']
@@ -58,7 +58,7 @@ def validate_settings(settings):
                          'period_style': ['timecourse', 'paired']}.items():
         if settings.get(key, DEFAULT_SETTINGS[key]) not in choices:
             raise ValueError(f'Unknown {key}')
-    for key in ('show_n', 'show_ns'):
+    for key in ('show_n', 'show_ns', 'show_test_summary'):
         if not isinstance(settings.get(key, DEFAULT_SETTINGS[key]), bool):
             raise ValueError(f'{key} must be a boolean')
     window = settings['latency_window_min']
@@ -218,8 +218,6 @@ def analyse(a: dict, sub: pl.DataFrame, groups: list[str], colors: dict, setting
         else:
             result['figure'] = P.grouped_plot(sub, value, by, groups, colors, posthoc=posthoc, error=error,
                                               category_labels=labels, xlabel=a.get('xlabel', bd['xlabel']), **common)
-    from .inference import annotate
-    annotate(a, result, settings)
     return result
 
 
@@ -227,7 +225,7 @@ def error_label(error):
     return {'sem': 'SEM', 'sd': 'SD', 'ci95': '95% CI of the mean'}[error]
 
 
-def render_analysis(a, table, groups, colors, settings, phase_starts, selection=None):
+def render_analysis(a, table, groups, colors, settings, phase_starts, selection=None, *, decorate=True):
     sub = select_data(table, a, groups, selection)
     present = present_groups(sub, groups)
     if sub.is_empty():
@@ -244,7 +242,7 @@ def render_analysis(a, table, groups, colors, settings, phase_starts, selection=
         eligible = eligible.filter(pl.col(a['by']).is_in(result['data'][a['by']].unique().implode()))
     result['stats']['sample_sizes'] = sample_sizes(eligible, a)
     result['notes'].append('n counts mice, not events. Missing includes unavailable mouse values within the selected cohort. Latency n includes right-censored mice.')
-    annotate(a, result, settings)
+    if decorate: annotate(a, result, settings)
     return result
 
 
@@ -271,6 +269,8 @@ def _run_analysis(a, tables, groups, colors, settings, out, phase_starts, select
             for trace in res['figure'].data:
                 if patch := style.get('traces', {}).get(trace_key(trace)):
                     trace.update(patch)
+        from .graph_layout import fit_figure
+        fit_figure(res['figure'], patches=(styles or {}).get(analysis_name(a), {}).get('layout', {}))
         name = analysis_name(a) + (f'_{_slug(phase)}' if several else '')
         P.save(res['figure'], out / 'figures/html' / f'{name}.html',
                out / 'figures/png' / f'{name}.png' if settings['export_images'] else None)

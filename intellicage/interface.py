@@ -389,8 +389,9 @@ h1,h2{letter-spacing:-.025em}.plotly-graph-div{border-radius:12px}.muted{color:#
         def rebuild():
             self.project.rebuild(settings)
             return True
-        if await self.task(rebuild):
-            await self.show_graph()
+        async with self.render_lock:
+            updated = await self.task(rebuild)
+        if updated: await self.show_graph()
 
     def edit_labels(self, index):
         if self.busy: return
@@ -551,7 +552,7 @@ h1,h2{letter-spacing:-.025em}.plotly-graph-div{border-radius:12px}.muted{color:#
             with ui.card().classes('chart-window single-chart-window p-3 gap-0').style(
                     f'width:{str(width + inset) + "px" if width else "100%"};height:{height + inset}px').mark('graph-window') as window:
                 with ui.element('div').classes('w-full grow min-h-0').style('position:relative'):
-                    ui.element('q-resize-observer').props('debounce=0').on(
+                    ui.element('q-resize-observer').props('debounce=100').on(
                         'resize', lambda e: self.resize_graph(project, name, window, e.args),
                         args=['width', 'height']).mark('graph-size')
                     plot = ui.plotly(figure).classes('w-full min-h-0').style('height:100%').mark('plot')
@@ -583,9 +584,14 @@ h1,h2{letter-spacing:-.025em}.plotly-graph-div{border-radius:12px}.muted{color:#
 
     def resize_graph(self, project, name, window, size):
         if project is not self.project or name != self.name or window.is_deleted: return
+        previous = project.styles.get(name, {}).get('size')
         if project.resize_graph(name, size):
             saved = project.styles[name]['size']
             window.style(f'width:{saved["width"] + 26}px;height:{saved["height"] + 26}px')
+            if previous != saved:
+                from .graph_layout import fit_plot
+                plot = next((e for e in window.descendants() if isinstance(e, ui.plotly)), None)
+                if plot: fit_plot(plot, saved['width'], saved['height'], project.styles[name].get('layout', {}))
 
     @staticmethod
     def grid(table, name='table'):

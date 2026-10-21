@@ -54,7 +54,8 @@ def _finish(fig, title, ylabel, xlabel='', ylim=None):
     fig.update_yaxes(showline=True, linewidth=1.5, ticks='outside', zeroline=False, rangemode='tozero')
     if ylim:
         fig.update_yaxes(range=ylim, autorange=False)
-    return fig
+    from .graph_layout import fit_figure
+    return fit_figure(fig)
 
 
 def _test_note(fig, tests):
@@ -236,7 +237,7 @@ def gate_raster(sessions, phase_starts, groups, colors, *, title):
 def save(fig: go.Figure, out_html: Path, out_png: Path | None = None):
     fig.write_html(out_html, include_plotlyjs='directory', config=PLOT_CONFIG)
     if out_png is not None:
-        fig.write_image(out_png, width=1200, height=650, scale=2)
+        fig.write_image(out_png, width=fig.layout.width or 900, height=fig.layout.height or 540, scale=1)
 
 
 def paired_period_plot(pairs, groups, colors, *, title, ylabel, error='sem', ylim=None, show_n=True):

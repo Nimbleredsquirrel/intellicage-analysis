@@ -6,10 +6,11 @@ from .plots import colors_for
 
 
 def draw_editor(owner, project, name, result, window):
+    from .graph_layout import KEY
     figure = result['figure']
     with ui.expansion('edit graph', icon='palette').classes('w-full bg-white rounded-xl'):
         with ui.row().classes('w-full'):
-            title = ui.input('title', value=figure.layout.title.text).classes('grow').mark('chart-title')
+            title = ui.input('title', value=(figure.layout.meta or {}).get(KEY, {}).get('title_source', figure.layout.title.text)).classes('grow').mark('chart-title')
             xlabel = ui.input('x axis', value=figure.layout.xaxis.title.text or '').classes('grow')
             ylabel = ui.input('y axis', value=figure.layout.yaxis.title.text or '').classes('grow')
             legend = ui.switch('show legend', value=figure.layout.showlegend is not False)

@@ -694,3 +694,50 @@ async def test_inference_settings_are_shared_between_graphs_and_dashboard(config
         result = page.project.result(name)
         assert any(trace.meta['role'] == 'paired mice' for trace in result['figure'].data)
         assert all(note.name != 'sample-size' for note in result['figure'].layout.annotations)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('location', ['graphs', 'dashboard'])
+async def test_apply_waits_for_background_graph_instead_of_losing_settings(config, monkeypatch, location):
+    from threading import Event
+    pages = []
+    async def root():
+        page = Explorer(None, local=True, native=True)
+        pages.append(page)
+        await page.install(Project(config))
+    async with user_simulation(root) as user:
+        await user.open('/')
+        page = pages[0]
+        started, release = Event(), Event()
+        original = page.project.result
+        first = True
+        def slow(name):
+            nonlocal first
+            result = original(name)
+            if first:
+                first = False
+                started.set()
+                assert release.wait(5)
+            return result
+        monkeypatch.setattr(page.project, 'result', slow)
+        with user.client:
+            rendering = asyncio.create_task(page.show_graph())
+            for _ in range(200):
+                if started.is_set(): break
+                await asyncio.sleep(.01)
+            assert started.is_set()
+            if location == 'graphs':
+                page.error.set_value('sd')
+                applying = asyncio.create_task(page.recalculate())
+            else:
+                applying = asyncio.create_task(page.board.settings.apply({'error': 'sd'}))
+            try:
+                await asyncio.sleep(.02)
+                assert not applying.done()
+                assert page.project.cfg['settings']['error'] == 'sem'
+            finally:
+                release.set()
+            await rendering
+            await applying
+        assert page.project.cfg['settings']['error'] == 'sd'
+        assert page.error.value == 'sd'

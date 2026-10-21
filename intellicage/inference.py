@@ -17,40 +17,71 @@ def significance_label(p, mode='p', show_ns=True):
 
 
 def annotate(a, result, settings):
+    from .graph_layout import KEY, fit_figure
+
     fig, stats = result['figure'], result['stats']
-    fig.layout.annotations = tuple(note for note in fig.layout.annotations if note.name not in ('stat', 'sample-size'))
+    fig.layout.annotations = tuple(n for n in fig.layout.annotations if n.name not in ('stat', 'sample-size', 'analysis-summary'))
+    fig.layout.shapes = tuple(s for s in fig.layout.shapes if s.name != 'stat-bracket')
+    groups = list(dict.fromkeys(t.meta['group'] for t in fig.data if isinstance(t.meta, dict) and t.meta.get('group')))
     comparisons = stats.get('posthoc', stats.get('test', pl.DataFrame()))
-    mode, show_ns = settings.get('significance', 'p'), settings.get('show_ns', False)
-    labels = {}
-    for row in comparisons.to_dicts():
-        if row.get('group_a') == 'all':
-            continue
-        text = significance_label(row.get('p_adj', row.get('p')), mode, show_ns)
-        if not text:
-            continue
-        prefix = f"{row.get('group_a', '')} vs {row.get('group_b', '')}"
-        if 'period' in row:
-            prefix = f"{row['group_a']} · {row['period']}" if row['contrast'] == 'within mouse' else f"{prefix} · {row['period']}"
-        x = row.get('day', row.get('level'))
-        labels.setdefault(x, []).append(f'{prefix}: {text}')
+    marks = []
     paired = a.get('plot') == 'period_timecourse' and settings.get('period_style') == 'paired'
-    days = sorted(result['stats'].get('paired_values', pl.DataFrame({'day': []}))['day'].unique()) if paired else []
-    for level, texts in labels.items():
-        options = {'xref': 'paper', 'x': .5, 'yref': 'paper', 'y': 1.08}
+    days = sorted(stats.get('paired_values', pl.DataFrame({'day': []}))['day'].unique()) if paired else []
+    means = next((t for t in fig.data if isinstance(t.meta, dict) and t.meta.get('role') == 'mean'), None)
+    categories = list(means.x) if means is not None else []
+    grouped = any(t.type == 'bar' for t in fig.data) and bool(a.get('by'))
+    for row in comparisons.to_dicts():
+        if row.get('group_a') == 'all': continue
+        label = significance_label(row.get('p_adj', row.get('p')), settings.get('significance', 'stars'), settings.get('show_ns', True))
+        if not label: continue
+        ga, gb = row['group_a'], row['group_b']
+        level = row.get('day', row.get('level'))
+        xref, yref, x0, x1 = 'x', 'y', None, None
         if paired:
-            if level not in days:
-                continue
+            if level not in days: continue
             axis = days.index(level) + 1
             suffix = str(axis) if axis > 1 else ''
-            options = {'xref': f'x{suffix} domain', 'yref': f'y{suffix} domain', 'x': .5, 'y': 1, 'yanchor': 'bottom', 'yshift': 22}
-        elif level is not None:
+            xref, yref = 'x' + suffix, 'y' + suffix
+            if row['contrast'] == 'within mouse':
+                x0, x1 = groups.index(ga) * 3, groups.index(ga) * 3 + 1
+            else:
+                periods = list(dict.fromkeys(stats['paired_values']['period_a'].to_list() + stats['paired_values']['period_b'].to_list()))
+                offset = periods.index(row['period'])
+                x0, x1 = groups.index(ga) * 3 + offset, groups.index(gb) * 3 + offset
+            x = (x0 + x1) / 2
+            position = (x + .5) / max(2, len(groups) * 3 - 1)
+        elif level is None:
+            x0, x1 = groups.index(ga), groups.index(gb)
+            x = (x0 + x1) / 2
+            position = (x + .5) / max(1, len(groups))
+        else:
             by = a.get('by')
-            if by == 'corner':
-                x = f'Corner {level}'
+            if grouped:
+                category = next((i for i, c in enumerate(sorted(result['data'][by].unique())) if str(c) == str(level)), None)
+                if category is None: continue
+                x = categories[category]
+                step = .8 / max(1, len(groups))
+                x0 = category + (groups.index(ga) - (len(groups) - 1) / 2) * step
+                x1 = category + (groups.index(gb) - (len(groups) - 1) / 2) * step
+                position = (category + .5) / max(1, len(categories))
             else:
                 x = next((v for v in result['data'][by].unique() if str(v) == str(level)), level)
-            options = {'x': x, 'yref': 'paper', 'y': 1.03}
-        fig.add_annotation(name='stat', text='<br>'.join(texts), showarrow=False, font={'size': 10}, **options)
+                levels = sorted(result['data'][by].unique())
+                position = (levels.index(x) + .5) / len(levels)
+                if 'period' in row:
+                    identity = ga + ' · day/night' if row['contrast'] == 'within mouse' else row['period']
+                    label = f'{identity}<br>{label}'
+                elif len(groups) > 2:
+                    label = f'{ga} vs {gb}<br>{label}'
+        hover = f"{ga} vs {gb}" + (f" · {row['period']}" if 'period' in row else '')
+        hover += f"<br>{row.get('test', '')}<br>raw {S.fmt_p(row.get('p'))}<br>adjusted {S.fmt_p(row.get('p_adj', row.get('p')))}"
+        fig.add_annotation(name='stat', text=label, x=x, xref=xref, y=.95, yref=yref + ' domain',
+                           showarrow=False, hovertext=hover, align='center', font={'size': 12})
+        marks.append({'index': len(fig.layout.annotations) - 1, 'text': label, 'xref': xref, 'yref': yref,
+                      'x0': x0, 'x1': x1, 'position': position, 'order': len(marks),
+                      'series': f"{ga}|{gb}|{row.get('period', '')}|{row.get('contrast', '')}",
+                      'bracket_span': (abs(x1 - x0) / (max(2, len(groups) * 3 - 1) if paired else
+                          max(1, len(categories)) if grouped else max(1, len(groups)))) if x0 is not None else 0})
     if settings.get('show_n', True) and 'sample_sizes' in stats:
         parts = []
         for group in stats['sample_sizes']['group'].unique(maintain_order=True):
@@ -58,11 +89,29 @@ def annotate(a, result, settings):
             count = str(counts.min()) if counts.min() == counts.max() else f'{counts.min()}–{counts.max()}'
             parts.append(f'{group}: n={count}')
         text = 'mice per point · ' + ' · '.join(parts)
-        if paired:
-            text = 'complete mouse pairs · n is shown for each group and cycle'
-        fig.add_annotation(name='sample-size', text=text, xref='paper', yref='paper', x=0, y=-.32,
-                           xanchor='left', showarrow=False, font={'size': 10})
-        fig.update_layout(margin_b=max(fig.layout.margin.b or 0, 130))
+        if paired: text = 'complete mouse pairs · n is shown for each group and cycle'
+        fig.add_annotation(name='sample-size', text=text, showarrow=False)
+    if settings.get('show_test_summary', True):
+        lines = []
+        omnibus = stats.get('omnibus', pl.DataFrame())
+        if omnibus.height:
+            test = omnibus['test'][0]
+            lines.append(test + ' · model P values')
+            lines.extend(f"{r['effect']}: {S.fmt_p(r['p'])}" for r in omnibus.to_dicts())
+        elif comparisons.height:
+            rows = [r for r in comparisons.to_dicts() if r.get('group_a') != 'all']
+            if rows and not a.get('by'):
+                lines.extend(f"{r['group_a']} vs {r['group_b']}: {S.fmt_p(r.get('p_adj', r.get('p')))} · {r['test']}" for r in rows)
+        if a.get('value') and a.get('plot') != 'latency':
+            lines.append('mean ± ' + {'sem': 'SEM', 'sd': 'SD', 'ci95': '95% CI'}[a.get('error', settings['error'])])
+        if comparisons.height and a.get('by'):
+            methods = ', '.join(str(v) for v in comparisons['correction'].drop_nulls().unique()) if 'correction' in comparisons.columns else settings['padjust']
+            lines.append(f"pairwise: {methods} · family: {settings.get('family_scope', 'graph')} · hover labels for P values")
+        if lines: fig.add_annotation(name='analysis-summary', text='<br>'.join(lines), showarrow=False)
+    meta = dict(fig.layout.meta or {})
+    meta[KEY] = {**meta.get(KEY, {}), 'marks': marks}
+    fig.update_layout(meta=meta, uirevision=analysis_name(a))
+    fit_figure(fig)
 
 
 def apply_families(results, analyses, settings):
@@ -115,7 +164,7 @@ def compute_results(analyses, tables, groups, colors, settings, starts, selectio
             continue
         name = analysis_name(a)
         try:
-            results[name] = render_analysis(a, tables[a['table']], groups, colors, settings, starts, selection)
+            results[name] = render_analysis(a, tables[a['table']], groups, colors, settings, starts, selection, decorate=False)
         except ValueError as exc:
             if str(exc) not in {'No data for this selection', 'No common observations for the selected groups'}:
                 raise

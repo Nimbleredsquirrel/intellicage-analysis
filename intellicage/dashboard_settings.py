@@ -13,13 +13,14 @@ class DashboardSettings:
 
     async def apply(self, changes):
         owner, project = self.board.owner, self.board.owner.project
-        if not project or owner.busy: return
+        if not project: return
         def rebuild():
             project.rebuild(changes)
             return True
         with owner.workspace_tabs.client:
-            if await owner.task(rebuild, status='updating analysis settings…') and owner.project is project:
-                await owner.install(project)
+            async with owner.render_lock:
+                updated = await owner.task(rebuild, status='updating analysis settings…') if owner.project is project else None
+            if updated and owner.project is project: await owner.install(project)
 
     def common(self, project):
         self.area.clear()
