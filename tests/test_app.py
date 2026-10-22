@@ -14,7 +14,7 @@ from intellicage.catalogue import analysis_name
 
 async def wait_loaded(page):
     for _ in range(100):
-        if not page.busy and any(page.graph_area.descendants()):
+        if not page.busy and not page.render_lock.locked() and any(page.graph_area.descendants()):
             return
         await asyncio.sleep(.05)
     raise AssertionError('Graph did not load')
@@ -106,7 +106,7 @@ async def test_multiple_unlabelled_folders_validate_together_before_install(conf
 
 
 @pytest.mark.asyncio
-async def test_settings_only_start_has_no_preloaded_experiments(tmp_path):
+async def test_settings_only_start_has_no_preloaded_experiments(tmp_path, wait_until):
     import yaml
     config = tmp_path/'config.yaml'
     config.write_text(yaml.safe_dump({'datasets': [], 'settings': {'error': 'sd'}}))
@@ -114,14 +114,14 @@ async def test_settings_only_start_has_no_preloaded_experiments(tmp_path):
     async def root(): pages.append(Explorer(config, local=True, native=True))
     async with user_simulation(root) as user:
         await user.open('/')
-        await asyncio.sleep(.3)
+        await wait_until(lambda: not pages[0].busy and pages[0].defaults.get('settings', {}).get('error') == 'sd')
         assert pages[0].project is None
         assert pages[0].defaults['settings']['error'] == 'sd'
         assert not user.notify.messages
 
 
 @pytest.mark.asyncio
-async def test_dashboard_filters_edits_and_downloads(config):
+async def test_dashboard_filters_edits_and_downloads(config, render_action):
     pages = []
     async def root():
         page = Explorer(None, local=True, native=False)
@@ -133,23 +133,23 @@ async def test_dashboard_filters_edits_and_downloads(config):
         page = pages[0]
         await wait_loaded(page)
         await user.should_see(marker='plot')
-        with user.client:
+        def select_mice():
             page.group_checkboxes['ko'].set_value(False)
             page.mouse_checkboxes[('control', 'lot 1', 1)].set_value(False)
-        await asyncio.sleep(.2)
+        with user.client:
+            await render_action(page, select_mice)
         result = page.project.result(page.name)
         assert set(result['data']['group']) == {'control'}
         assert 1 not in result['data']['animal']
         user.find(marker='chart-title').clear().type('my visits')
-        user.find(marker='apply-titles').click()
-        await asyncio.sleep(.3)
+        await render_action(page, lambda: user.find(marker='apply-titles').click())
         assert page.project.result(page.name)['figure'].layout.title.text == 'my visits'
         user.find(marker='prism-csv').click()
-        await asyncio.sleep(.1)
+        await user.download.next(timeout=15)
         with user.client:
             await page.save_project()
             await page.download_graph('html')
-        await asyncio.sleep(.1)
+        await user.download.next(timeout=15)
         assert user.download.http_responses
 
 
@@ -178,7 +178,8 @@ async def test_empty_start_and_folder_import(config):
 
 
 @pytest.mark.asyncio
-async def test_settings_labels_colors_and_native_folder(config, tmp_path, monkeypatch):
+@pytest.mark.parametrize('slow_render', [False, True])
+async def test_settings_labels_colors_and_native_folder(config, tmp_path, monkeypatch, slow_render, render_action):
     from types import SimpleNamespace
     from nicegui import app
     import webview
@@ -206,10 +207,16 @@ async def test_settings_labels_colors_and_native_folder(config, tmp_path, monkey
             await page.recalculate()
         assert page.project.cfg['settings']['latency_window_min'] is None
         assert not page.project.tables['latency']['latency_first_visit_censored'].any()
+        if slow_render:
+            import time
+            original = page.project.result
+            def delayed_result(name):
+                time.sleep(.3)
+                return original(name)
+            monkeypatch.setattr(page.project, 'result', delayed_result)
         user.find(kind=ui.input,content='legend · control').clear().type('new control')
         # the editor has one apply button per group
-        user.find(marker='apply-color-control').click()
-        await asyncio.sleep(.2)
+        await render_action(page, lambda: user.find(marker='apply-color-control').click())
         assert page.project.result(page.name)['figure'].data[0].name == 'new control'
         with user.client:
             await page.download_graph('html')
@@ -228,10 +235,11 @@ async def test_settings_labels_colors_and_native_folder(config, tmp_path, monkey
             page.label_inputs[0].set_value('')
             await page.relabel()
         assert user.notify.contains('names are required')
+        def clear_groups():
+            for box in page.group_checkboxes.values(): box.set_value(False)
         with user.client:
             page.metadata_dialog.close()
-            for box in page.group_checkboxes.values(): box.set_value(False)
-        await asyncio.sleep(.2)
+            await render_action(page, clear_groups)
         assert page.project.result(page.name)['data'].is_empty()
 
 
@@ -260,7 +268,6 @@ async def test_upload_zip_project_and_empty_selection(config,tmp_path):
         saved=page.project.save()
         with user.client:
             await page.upload(SimpleNamespace(file=File('saved.icage',saved)))
-        await asyncio.sleep(.2)
         assert page.project.datasets[0].group=='control'
         with user.client:
             await page.set_mice(False)
@@ -306,7 +313,7 @@ async def test_initial_config_error_handling_busy_and_no_project(config,tmp_path
 
 
 @pytest.mark.asyncio
-async def test_plot_events_and_csv_buttons(config):
+async def test_plot_events_and_csv_buttons(config, render_action):
     pages=[]
     async def root():
         page=Explorer(None,local=False,native=False);pages.append(page);await page.install(Project(config))
@@ -316,14 +323,12 @@ async def test_plot_events_and_csv_buttons(config):
         user.find(marker='plot').trigger('plotly_restyle',{'0':{'name':['direct legend']},'1':[0]})
         assert page.project.result(page.name)['figure'].layout.title.text=='direct edit'
         assert page.project.result(page.name)['figure'].data[0].name=='direct legend'
-        user.find(kind=ui.button,content='reset graph edits').click()
-        await asyncio.sleep(.2)
+        await render_action(page, lambda: user.find(kind=ui.button,content='reset graph edits').click())
         assert page.name not in page.project.styles
         # exercise each saved graph type through the graph chooser
         for analysis in page.project.analyses:
             with user.client:
                 await page.open_board_graph(analysis.get('name') or analysis_name(analysis))
-            await asyncio.sleep(.15)
         assert page.graph_area.descendants()
 
 
@@ -373,19 +378,19 @@ async def test_folder_upload_rejects_unsafe_paths_and_limits(config,monkeypatch)
 
 
 @pytest.mark.asyncio
-async def test_invalid_initial_configuration_stays_in_empty_app(tmp_path):
+async def test_invalid_initial_configuration_stays_in_empty_app(tmp_path, wait_until):
     path=tmp_path/'bad.yaml';path.write_text('datasets: [invalid')
     pages=[]
     async def root():pages.append(Explorer(path,local=False,native=False))
     async with user_simulation(root) as user:
         await user.open('/')
-        await asyncio.sleep(.3)
+        await wait_until(lambda: bool(user.notify.messages))
         assert pages[0].project is None
         assert user.notify.messages
 
 
 @pytest.mark.asyncio
-async def test_activity_sections_default_windows_and_custom_day_night(config):
+async def test_activity_sections_default_windows_and_custom_day_night(config, render_action):
     config['analyses']='all'
     pages=[]
     async def root():
@@ -394,8 +399,7 @@ async def test_activity_sections_default_windows_and_custom_day_night(config):
         await user.open('/');page=pages[0];await wait_loaded(page)
         assert [(start.value,end.value) for _,start,end in page.window_inputs]==[('08:00','20:00'),('20:00','08:00')]
         with user.client:
-            page.analysis_view.set_value('day / night')
-        await asyncio.sleep(.3)
+            await render_action(page, lambda: page.analysis_view.set_value('day / night'))
         assert len(page.graph_select.options)==6
         assert len(page.project.result(page.name)['figure'].data)==4
         with user.client:
@@ -408,14 +412,13 @@ async def test_activity_sections_default_windows_and_custom_day_night(config):
         assert result['data']['hours'].unique().to_list()==[6.]
         assert len(result['figure'].data)==4
         with user.client:
-            page.analysis_view.set_value('hourly activity')
-        await asyncio.sleep(.3)
+            await render_action(page, lambda: page.analysis_view.set_value('hourly activity'))
         assert len(page.graph_select.options)==6
         assert not page.project.result(page.name)['figure'].layout.shapes
 
 
 @pytest.mark.asyncio
-async def test_table_previews_are_built_only_when_opened(config):
+async def test_table_previews_are_built_only_when_opened(config, render_action):
     pages = []
     async def root():
         page = Explorer(None, local=True, native=True)
@@ -430,17 +433,15 @@ async def test_table_previews_are_built_only_when_opened(config):
             statistics = next(e for e in page.details_area.descendants()
                               if isinstance(e, ui.expansion) and e.text == 'statistics & graph data')
             statistics.set_value(True)
-        await asyncio.sleep(.1)
         count = sum(isinstance(e, ui.aggrid) for e in page.details_area.descendants())
         assert count > 0
         with user.client:
             statistics.set_value(False)
             statistics.set_value(True)
-        await asyncio.sleep(.1)
         assert sum(isinstance(e, ui.aggrid) for e in page.details_area.descendants()) == count
         assert not any(page.table_content.descendants())
-        with user.client: page.workspace_tabs.set_value('tables')
-        await asyncio.sleep(.1)
+        with user.client:
+            await render_action(page, lambda: page.workspace_tabs.set_value('tables'))
         assert page.table_preview.table.height == page.project.tables['mouse_summary'].height
         assert any(isinstance(e, ui.aggrid) for e in page.table_content.descendants())
         assert not any(isinstance(e, ui.expansion) and e.text == 'all intermediate tables'

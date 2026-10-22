@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+import asyncio
 import json
 
 import polars as pl
@@ -8,6 +9,44 @@ import pytest
 
 from intellicage.io import load_dataset
 from intellicage.pipeline import DEFAULT_SETTINGS, build_tables
+
+
+@pytest.fixture
+def wait_until():
+    async def wait(condition):
+        async with asyncio.timeout(15):
+            while not condition():
+                await asyncio.sleep(.01)
+    return wait
+
+
+@pytest.fixture
+def render_action(monkeypatch):
+    from intellicage.interface import Explorer
+
+    completed, changed = {}, asyncio.Event()
+    show_graph = Explorer.show_graph
+    async def tracked(page):
+        version = page.render_version + 1
+        try:
+            return await show_graph(page)
+        finally:
+            completed[page] = max(version, completed.get(page, 0))
+            changed.set()
+    monkeypatch.setattr(Explorer, 'show_graph', tracked)
+
+    async def apply(page, action):
+        previous = page.render_version
+        action()
+        async with asyncio.timeout(15):
+            while True:
+                changed.clear()
+                # an older render cannot complete a newer action
+                version = completed.get(page, 0)
+                if version > previous and version == page.render_version and not page.busy and not page.render_lock.locked():
+                    return
+                await changed.wait()
+    return apply
 
 
 @pytest.fixture
