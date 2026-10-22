@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock
 import pytest
 from nicegui import ui, app
 from fastapi.routing import APIRoute
-from nicegui.testing.user_simulation import user_simulation
+from tests.ui_simulation import user_simulation
 
 from intellicage.interface import Explorer, import_folder
 from intellicage.project import Project
@@ -736,7 +736,8 @@ async def test_old_render_cannot_overwrite_the_latest_graph(config, monkeypatch)
 
 
 @pytest.mark.asyncio
-async def test_readding_original_folder_after_opening_saved_project_preserves_phase(config, tmp_path):
+@pytest.mark.parametrize('slow_open', [False, True])
+async def test_readding_original_folder_after_opening_saved_project_preserves_phase(config, tmp_path, slow_open):
     config['analyses'] = 'all'
     config['datasets'][0]['phase'] = config['datasets'][1]['phase'] = 'Phase 3'
     original_path = Path(config['datasets'][0]['path'])
@@ -745,10 +746,13 @@ async def test_readding_original_folder_after_opening_saved_project_preserves_ph
     async def root():
         page = Explorer(None, local=True, native=True)
         pages.append(page)
+        if slow_open:
+            await asyncio.sleep(3.2)
         await page.install(Project.open(saved, tmp_path/'opened'))
     async with user_simulation(root) as user:
         await user.open('/')
         page = pages[0]
+        assert user.client.page.response_timeout == 3
         removed = page.project.datasets[0]
         assert removed.path != original_path
         with user.client:

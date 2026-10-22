@@ -3,7 +3,7 @@ from threading import Event
 
 import pytest
 from nicegui import ui
-from nicegui.testing.user_simulation import user_simulation
+from tests.ui_simulation import user_simulation
 
 from intellicage.interface import Explorer
 from intellicage.project import Project

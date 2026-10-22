@@ -8,7 +8,7 @@ from zipfile import ZipFile
 import polars as pl
 import pytest
 from nicegui import ui
-from nicegui.testing.user_simulation import user_simulation
+from tests.ui_simulation import user_simulation
 from polars.testing import assert_frame_equal
 
 from intellicage.table_view import TablePreview, column_info, excel_bytes, table_bytes

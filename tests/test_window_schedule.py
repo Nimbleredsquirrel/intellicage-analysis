@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 import polars as pl
 import pytest
 from nicegui import ui
-from nicegui.testing.user_simulation import user_simulation
+from tests.ui_simulation import user_simulation
 from polars.testing import assert_frame_equal
 
 from intellicage import metrics as M

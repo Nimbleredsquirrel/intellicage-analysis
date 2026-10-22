@@ -3,7 +3,7 @@ import copy
 
 import pytest
 from nicegui import ui
-from nicegui.testing.user_simulation import user_simulation
+from tests.ui_simulation import user_simulation
 
 from intellicage.catalogue import analysis_name
 from intellicage.interface import Explorer
