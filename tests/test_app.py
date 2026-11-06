@@ -357,6 +357,27 @@ def test_app_launch_modes_and_missing_local_datasets(tmp_path, monkeypatch):
     with pytest.raises(SystemExit): interface.main(['--web'])
 
 
+def test_packaged_windows_uses_edge_and_monitors_the_real_window(tmp_path, monkeypatch):
+    import intellicage.interface as interface
+    import intellicage.window_monitor as monitor
+    import intellicage.windows_startup as startup
+
+    calls, watched = [], []
+    monkeypatch.setattr(ui, 'run', lambda **kwargs: calls.append(kwargs))
+    monkeypatch.setattr(interface.native, 'find_open_port', lambda: 9123)
+    monkeypatch.setattr(startup, 'packaged_windows', lambda: True)
+    monkeypatch.setattr(monitor, 'monitor_window', lambda path: watched.append(path))
+    monkeypatch.setattr(app.native, 'start_args', {})
+    destination = tmp_path / 'window check'
+    interface.main(['--check-window', str(destination), '--config', str(tmp_path / 'absent')])
+    assert calls[-1]['native']
+    assert app.native.start_args['gui'] == 'edgechromium'
+    assert watched == [destination]
+    interface.main(['--browser', '--config', str(tmp_path / 'absent')])
+    assert not calls[-1]['native']
+    assert watched == [destination]
+
+
 @pytest.mark.asyncio
 async def test_folder_upload_rejects_unsafe_paths_and_limits(config,monkeypatch):
     import intellicage.interface as interface

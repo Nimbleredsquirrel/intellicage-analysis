@@ -799,11 +799,18 @@ def main(argv=None):
     parser.add_argument('--config', type=Path, default=ROOT / 'config.yaml')
     parser.add_argument('--port', type=int, default=None)
     parser.add_argument('--no-show', action='store_true')
+    parser.add_argument('--check-window', type=Path, help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
     desktop = not args.browser
     port = args.port if args.port is not None else native.find_open_port()
     if desktop:
         app.native.settings['ALLOW_DOWNLOADS'] = True
+        from .windows_startup import packaged_windows
+        if packaged_windows():
+            app.native.start_args['gui'] = 'edgechromium'
+        if packaged_windows() or args.check_window is not None:
+            from .window_monitor import monitor_window
+            monitor_window(args.check_window)
     config = args.config if args.config.is_file() else None
     if config:
         cfg = yaml.safe_load(config.read_text(encoding='utf8'))

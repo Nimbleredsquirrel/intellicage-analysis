@@ -24,6 +24,11 @@ def chrome_worker():
 
 
 def prepare_stdio():
+    from .windows_startup import packaged_windows, prepare_log_streams
+
+    if packaged_windows():
+        prepare_log_streams()
+        return
     # windowed windows apps have no console streams
     for name, mode in [('stdin', 'r'), ('stdout', 'w'), ('stderr', 'w')]:
         if getattr(sys, name) is None:

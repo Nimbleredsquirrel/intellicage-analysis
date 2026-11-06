@@ -208,11 +208,14 @@ def test_batch_reproduces_saved_graph_styles(tmp_path,config):
 
 
 def test_cli_entrypoints(config,tmp_path,monkeypatch):
+    from contextlib import nullcontext
     import runpy
     import intellicage.interface
+    import intellicage.windows_startup
     from intellicage.__main__ import main
     calls=[]
     monkeypatch.setattr(intellicage.interface,'main',lambda argv:calls.append(argv))
+    monkeypatch.setattr(intellicage.windows_startup, 'application_session', lambda: nullcontext(True))
     runpy.run_module('app',run_name='__main__')
     monkeypatch.setattr(sys,'frozen',True,raising=False)
     monkeypatch.setattr(sys,'argv',['IntelliCage'])

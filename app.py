@@ -10,6 +10,10 @@ if __name__ in {'__main__', '__mp_main__'}:
         if len(sys.argv) == 3 and sys.argv[1] == '--check-exports':
             check_exports(sys.argv[2])
         else:
-            from intellicage.interface import main
+            from intellicage.windows_startup import application_session
 
-            main(['--desktop', *sys.argv[1:]] if getattr(sys, 'frozen', False) else None)
+            with application_session() as launch:
+                if launch:
+                    from intellicage.interface import main
+
+                    main(['--desktop', *sys.argv[1:]] if getattr(sys, 'frozen', False) else None)

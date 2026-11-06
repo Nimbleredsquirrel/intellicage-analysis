@@ -1,19 +1,23 @@
 name: desktop builds
 on:
   workflow_dispatch:
+    inputs:
+      platform:
+        description: Platform to build
+        type: choice
+        default: all
+        options:
+          - all
+          - Windows
+          - macOS-Apple-Silicon
+          - macOS-Intel
 jobs:
   build:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - os: macos-14
-            package: macOS-Apple-Silicon
-          - os: macos-15-intel
-            package: macOS-Intel
-          - os: windows-latest
-            package: Windows
-    runs-on: ${{ matrix.os }}
+        package: ${{ fromJSON(inputs.platform == 'all' && '["macOS-Apple-Silicon","macOS-Intel","Windows"]' || format('["{0}"]', inputs.platform)) }}
+    runs-on: ${{ fromJSON('{"macOS-Apple-Silicon":"macos-14","macOS-Intel":"macos-15-intel","Windows":"windows-latest"}')[matrix.package] }}
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v6
@@ -31,7 +35,30 @@ jobs:
           browser = subprocess.check_output(['poetry', 'run', 'python', '-c', script], text=True).strip()
           with open(os.environ['GITHUB_ENV'], 'a', encoding='utf8') as output:
               output.write(f'BROWSER_PATH={browser}\n')
-      - run: poetry run nicegui-pack --name "intellicage analysis" --onedir --windowed --clean --noconfirm app.py
+      - name: package mac app
+        if: runner.os == 'macOS'
+        run: poetry run nicegui-pack --name "intellicage analysis" --onedir --windowed --clean --noconfirm app.py
+      - name: bundle the microsoft window installer
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $bootstrap = Join-Path $env:RUNNER_TEMP 'intellicage-bootstrap'
+          New-Item -ItemType Directory -Force $bootstrap | Out-Null
+          $installer = Join-Path $bootstrap 'MicrosoftEdgeWebview2Setup.exe'
+          Invoke-WebRequest -Uri 'https://go.microsoft.com/fwlink/p/?LinkId=2124703' -OutFile $installer
+          $signature = Get-AuthenticodeSignature $installer
+          if ($signature.Status -ne 'Valid' -or $signature.SignerCertificate.Subject -notmatch 'O=Microsoft Corporation') {
+            throw 'The WebView2 installer does not have a valid Microsoft signature'
+          }
+          $available = poetry run python -c "from intellicage.windows_startup import webview_version; print('ready' if webview_version() else 'missing')"
+          if ($available -ne 'ready') {
+            $setup = Start-Process -FilePath (Resolve-Path $installer) -ArgumentList '/silent', '/install' -Wait -PassThru
+            $available = poetry run python -c "from intellicage.windows_startup import webview_version; print('ready' if webview_version() else 'missing')"
+            if ($available -ne 'ready') { throw "WebView2 setup failed: $($setup.ExitCode)" }
+          }
+      - name: package windows app
+        if: runner.os == 'Windows'
+        run: poetry run nicegui-pack --name "intellicage analysis" --onedir --windowed --clean --noconfirm --add-data "${{ runner.temp }}/intellicage-bootstrap/MicrosoftEdgeWebview2Setup.exe;bootstrap" app.py
       - name: archive mac app
         if: runner.os == 'macOS'
         run: ditto -c -k --sequesterRsrc --keepParent 'dist/intellicage analysis.app' 'dist/intellicage-analysis-${{ matrix.package }}.zip'
@@ -43,7 +70,7 @@ jobs:
         env:
           PACKAGE: ${{ matrix.package }}
         run: |
-          import json, os, subprocess, tempfile, zipfile
+          import ctypes, json, os, shutil, subprocess, tempfile, time, zipfile
           from pathlib import Path
           archive = Path('dist') / f"intellicage-analysis-{os.environ['PACKAGE']}.zip"
           results = Path(os.environ['RUNNER_TEMP']) / 'intellicage-check-results'
@@ -61,14 +88,52 @@ jobs:
               for key in ('PYTHONPATH', 'PYTHONHOME', 'VIRTUAL_ENV'):
                   environment.pop(key, None)
               environment['PATH'] = str(Path(os.environ['SystemRoot']) / 'System32') if os.name == 'nt' else '/usr/bin:/bin:/usr/sbin:/sbin'
-              process = subprocess.run([str(executable), '--check-exports', str(results)],
-                                       cwd=folder, env=environment, timeout=240)
-              error = results / 'error.txt'
-              if error.exists():
-                  print(error.read_text(encoding='utf8'))
-              process.check_returncode()
-              assert json.loads((results / 'check.json').read_text()) == {'ok': True}
-              print('Desktop exports verified: PNG, SVG, dashboard PDF, CSV, TXT, XLSX; Welch, mixed ANOVA and LMM checked')
+              try:
+                  process = subprocess.run([str(executable), '--check-exports', str(results)],
+                                           cwd=folder, env=environment, timeout=240)
+                  error = results / 'error.txt'
+                  if error.exists():
+                      print(error.read_text(encoding='utf8'))
+                  process.check_returncode()
+                  assert json.loads((results / 'check.json').read_text()) == {'ok': True}
+                  print('Desktop exports verified: PNG, SVG, dashboard PDF, CSV, TXT, XLSX; Welch, mixed ANOVA and LMM checked')
+                  if os.name == 'nt':
+                      process = subprocess.Popen([str(executable), '--check-window', str(results)],
+                                                 cwd=folder, env=environment)
+                      marker = results / 'window-check.json'
+                      deadline = time.monotonic() + 90
+                      while not marker.exists():
+                          if process.poll() is not None:
+                              raise RuntimeError(f'The desktop window exited early: {process.returncode}')
+                          if time.monotonic() > deadline:
+                              raise TimeoutError('The desktop window did not become ready')
+                          time.sleep(.2)
+                      report = json.loads(marker.read_text(encoding='utf8'))
+                      assert report['shown'] and report['connected'] and report['ready']
+                      assert report['title'] == 'intellicage analysis'
+                      duplicate = subprocess.run([str(executable)], cwd=folder, env=environment, timeout=45)
+                      duplicate.check_returncode()
+                      assert process.poll() is None, 'A duplicate launch closed the original window'
+                      from ctypes import wintypes
+                      user32 = ctypes.windll.user32
+                      user32.FindWindowW.restype = wintypes.HWND
+                      user32.FindWindowW.argtypes = [wintypes.LPCWSTR, wintypes.LPCWSTR]
+                      user32.IsWindowVisible.argtypes = [wintypes.HWND]
+                      user32.PostMessageW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
+                      window = user32.FindWindowW(None, 'intellicage analysis')
+                      assert window and user32.IsWindowVisible(window), 'The desktop window is not visible'
+                      assert user32.PostMessageW(window, 0x0010, 0, 0), 'The desktop window could not be closed'
+                      assert process.wait(timeout=30) == 0
+                      print('Native Windows window opened, loaded its interface, handled a duplicate launch and closed')
+              finally:
+                  if os.name == 'nt':
+                      log = Path(os.environ['LOCALAPPDATA']) / 'intellicage analysis/logs/startup.log'
+                      results.mkdir(exist_ok=True)
+                      if log.exists():
+                          shutil.copy2(log, results / 'startup.log')
+                          print(log.read_text(encoding='utf8', errors='replace')[-12000:])
+                      subprocess.run(['taskkill', '/F', '/T', '/IM', 'intellicage analysis.exe'],
+                                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
       - name: save export check files
         uses: actions/upload-artifact@v7
         if: failure()
