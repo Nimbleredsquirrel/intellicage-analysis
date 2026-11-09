@@ -18,6 +18,7 @@ def monitor_window(check_folder=None, timeout=60):
 
     async def connected(client):
         nonlocal checking
+        record('native client connected')
         if checking or ready.is_set(): return
         checking = True
         try:
@@ -61,6 +62,7 @@ def monitor_window(check_folder=None, timeout=60):
         ready.set()
 
     app.native.on('shown', window_shown)
+    app.native.on('loaded', lambda: record('native page loaded'))
     app.on_connect(connected)
     app.on_startup(watchdog)
     app.on_shutdown(stopped)
