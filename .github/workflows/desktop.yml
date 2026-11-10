@@ -88,6 +88,7 @@ jobs:
               for key in ('PYTHONPATH', 'PYTHONHOME', 'VIRTUAL_ENV'):
                   environment.pop(key, None)
               environment['PATH'] = str(Path(os.environ['SystemRoot']) / 'System32') if os.name == 'nt' else '/usr/bin:/bin:/usr/sbin:/sbin'
+              process = None
               try:
                   process = subprocess.run([str(executable), '--check-exports', str(results)],
                                            cwd=folder, env=environment, timeout=240)
@@ -97,20 +98,20 @@ jobs:
                   process.check_returncode()
                   assert json.loads((results / 'check.json').read_text()) == {'ok': True}
                   print('Desktop exports verified: PNG, SVG, dashboard PDF, CSV, TXT, XLSX; Welch, mixed ANOVA and LMM checked')
+                  process = subprocess.Popen([str(executable), '--check-window', str(results)],
+                                             cwd=folder, env=environment)
+                  marker = results / 'window-check.json'
+                  deadline = time.monotonic() + 90
+                  while not marker.exists():
+                      if process.poll() is not None:
+                          raise RuntimeError(f'The desktop window exited early: {process.returncode}')
+                      if time.monotonic() > deadline:
+                          raise TimeoutError('The desktop window did not become ready')
+                      time.sleep(.2)
+                  report = json.loads(marker.read_text(encoding='utf8'))
+                  assert report['shown'] and report['connected'] and report['ready']
+                  assert report['title'] == 'intellicage analysis'
                   if os.name == 'nt':
-                      process = subprocess.Popen([str(executable), '--check-window', str(results)],
-                                                 cwd=folder, env=environment)
-                      marker = results / 'window-check.json'
-                      deadline = time.monotonic() + 90
-                      while not marker.exists():
-                          if process.poll() is not None:
-                              raise RuntimeError(f'The desktop window exited early: {process.returncode}')
-                          if time.monotonic() > deadline:
-                              raise TimeoutError('The desktop window did not become ready')
-                          time.sleep(.2)
-                      report = json.loads(marker.read_text(encoding='utf8'))
-                      assert report['shown'] and report['connected'] and report['ready']
-                      assert report['title'] == 'intellicage analysis'
                       duplicate = subprocess.run([str(executable)], cwd=folder, env=environment, timeout=45)
                       duplicate.check_returncode()
                       assert process.poll() is None, 'A duplicate launch closed the original window'
@@ -125,15 +126,23 @@ jobs:
                       assert user32.PostMessageW(window, 0x0010, 0, 0), 'The desktop window could not be closed'
                       assert process.wait(timeout=30) == 0
                       print('Native Windows window opened, loaded its interface, handled a duplicate launch and closed')
+                  else:
+                      process.terminate()
+                      process.wait(timeout=30)
+                      print('Native macOS window opened and loaded its interface; app terminated')
               finally:
+                  log_root = Path(os.environ['LOCALAPPDATA']) if os.name == 'nt' else Path(tempfile.gettempdir())
+                  log = log_root / 'intellicage analysis/logs/startup.log'
+                  results.mkdir(exist_ok=True)
+                  if log.exists():
+                      shutil.copy2(log, results / 'startup.log')
+                      print(log.read_text(encoding='utf8', errors='replace')[-12000:])
                   if os.name == 'nt':
-                      log = Path(os.environ['LOCALAPPDATA']) / 'intellicage analysis/logs/startup.log'
-                      results.mkdir(exist_ok=True)
-                      if log.exists():
-                          shutil.copy2(log, results / 'startup.log')
-                          print(log.read_text(encoding='utf8', errors='replace')[-12000:])
                       subprocess.run(['taskkill', '/F', '/T', '/IM', 'intellicage analysis.exe'],
                                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                  elif isinstance(process, subprocess.Popen) and process.poll() is None:
+                      process.kill()
+                      process.wait(timeout=10)
       - name: save export check files
         uses: actions/upload-artifact@v7
         if: failure()
