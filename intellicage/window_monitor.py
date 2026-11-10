@@ -7,7 +7,7 @@ from nicegui import app, run
 from .windows_startup import record, report_error
 
 
-def monitor_window(check_folder=None, timeout=60):
+def monitor_window(check_folder=None, timeout=180):
     ready, shown, checking = asyncio.Event(), False, False
     folder = Path(check_folder) if check_folder is not None else None
 

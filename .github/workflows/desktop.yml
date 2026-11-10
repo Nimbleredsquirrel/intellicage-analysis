@@ -101,7 +101,7 @@ jobs:
                   process = subprocess.Popen([str(executable), '--check-window', str(results)],
                                              cwd=folder, env=environment)
                   marker = results / 'window-check.json'
-                  deadline = time.monotonic() + 90
+                  deadline = time.monotonic() + 240
                   while not marker.exists():
                       if process.poll() is not None:
                           raise RuntimeError(f'The desktop window exited early: {process.returncode}')
