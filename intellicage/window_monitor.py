@@ -27,7 +27,7 @@ def monitor_window(check_folder=None, timeout=60):
                     state = await client.run_javascript('''return {
                         title: document.title,
                         ready: document.body.innerText.includes('intellicage analysis') &&
-                            [...document.querySelectorAll('button')].some(b => b.innerText.includes('new project'))
+                            [...document.querySelectorAll('button')].some(b => b.textContent.includes('new project'))
                     };''', timeout=15)
                     if shown and state and state.get('ready'):
                         break
