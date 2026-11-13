@@ -1,4 +1,5 @@
 import json
+from sys import platform
 
 from nicegui import run, ui
 
@@ -18,7 +19,6 @@ def show_error(error, message=None):
         status = ui.label().classes('text-sm').mark('copy-log-status')
         async def copy():
             try:
-                from sys import platform
                 if platform in ('win32', 'darwin'):
                     await run.io_bound(copy_text, report)
                 else:

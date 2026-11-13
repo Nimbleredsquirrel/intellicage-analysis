@@ -14,7 +14,7 @@ from tests.ui_simulation import user_simulation
 @pytest.mark.asyncio
 async def test_error_log_can_be_copied_and_downloaded(monkeypatch, tmp_path):
     monkeypatch.setattr(W, 'log_path', lambda: tmp_path / 'startup.log')
-    monkeypatch.setattr('sys.platform', 'darwin')
+    monkeypatch.setattr(D, 'platform', 'darwin')
     copy = Mock()
     monkeypatch.setattr(D, 'copy_text', copy)
     async def root():
@@ -35,7 +35,7 @@ async def test_error_log_can_be_copied_and_downloaded(monkeypatch, tmp_path):
 
 @pytest.mark.asyncio
 async def test_failed_clipboard_does_not_hide_the_log_or_open_another_error(monkeypatch):
-    monkeypatch.setattr('sys.platform', 'darwin')
+    monkeypatch.setattr(D, 'platform', 'darwin')
     monkeypatch.setattr(D, 'copy_text', Mock(side_effect=OSError('clipboard busy')))
     async def root(): D.show_error(ValueError('bad data'))
     async with user_simulation(root) as user:
@@ -48,7 +48,7 @@ async def test_failed_clipboard_does_not_hide_the_log_or_open_another_error(monk
 @pytest.mark.asyncio
 async def test_non_native_clipboard_awaits_the_javascript_result(monkeypatch):
     from unittest.mock import AsyncMock
-    monkeypatch.setattr('sys.platform', 'linux')
+    monkeypatch.setattr(D, 'platform', 'linux')
     javascript = AsyncMock(return_value=True)
     monkeypatch.setattr(ui, 'run_javascript', javascript)
     async def root(): D.show_error(ValueError('bad data'))
@@ -93,6 +93,7 @@ def test_packaged_macos_startup_failure_offers_the_system_error_dialog(monkeypat
     monkeypatch.setattr(W, 'packaged_windows', lambda: False)
     monkeypatch.setattr('sys.platform', 'darwin')
     monkeypatch.setattr('sys.frozen', True, raising=False)
+    monkeypatch.setattr(W.platform, 'platform', lambda: 'macOS test')
     dialog = Mock()
     monkeypatch.setattr(native_errors, 'error_dialog', dialog)
     with pytest.raises(ValueError):
