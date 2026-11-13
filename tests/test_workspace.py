@@ -253,7 +253,7 @@ async def test_failed_calculations_clear_old_plots_and_allow_recovery(config, mo
         monkeypatch.setattr(page.project, 'result', broken)
         with user.client: await page.show_graph()
         assert not any(isinstance(e, ui.plotly) for e in page.graph_area.descendants())
-        assert user.notify.contains('calculation failed')
+        await user.should_see('calculation failed')
         with user.client: page.workspace_tabs.set_value('page')
         await settled(page)
         assert name in page.board.cards
@@ -612,7 +612,7 @@ async def test_download_keeps_frame_size_and_editor_controls_all_layout_changes(
         assert page.project.styles[name]['size'] == {'width': 840, 'height': 630}
         with user.client: ratio.set_value('bad')
         user.find(marker='apply-ratio').click()
-        assert user.notify.contains('positive width:height')
+        await user.should_see('positive width:height')
         with user.client: ratio.set_value('1:0')
         user.find(marker='apply-ratio').click()
         assert page.project.styles[name]['size']['height'] == 630
@@ -833,7 +833,7 @@ async def test_many_comparisons_have_one_editor_and_graph_local_appearance(confi
         with user.client: user.find(marker='comparison-label-size').elements.pop().set_value(None)
         user.find(marker='apply-comparisons').click()
         await settled(page)
-        assert user.notify.contains('Invalid comparison size')
+        await user.should_see('Invalid comparison size')
 
 
 @pytest.mark.asyncio

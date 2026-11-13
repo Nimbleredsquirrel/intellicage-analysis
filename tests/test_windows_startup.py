@@ -6,7 +6,7 @@ from unittest.mock import Mock
 
 import pytest
 
-from intellicage import desktop, windows_startup as W
+from intellicage import desktop, native_errors, windows_startup as W
 
 
 @pytest.fixture
@@ -14,7 +14,8 @@ def windows(monkeypatch, tmp_path):
     kernel = SimpleNamespace(CreateMutexW=Mock(return_value=101), GetLastError=Mock(return_value=0),
                              CloseHandle=Mock())
     user = SimpleNamespace(MessageBoxW=Mock(return_value=6), FindWindowW=Mock(return_value=0),
-                           ShowWindow=Mock(), SetForegroundWindow=Mock())
+                           ShowWindow=Mock(), SetForegroundWindow=Mock(), ErrorDialog=Mock())
+    monkeypatch.setattr(native_errors, 'error_dialog', user.ErrorDialog)
     monkeypatch.setattr(W.ctypes, 'windll', SimpleNamespace(kernel32=kernel, user32=user), raising=False)
     monkeypatch.setattr(W.ctypes, 'WinDLL', lambda *args, **kwargs: kernel, raising=False)
     monkeypatch.setattr(W.ctypes, 'set_last_error', Mock(), raising=False)
@@ -139,8 +140,9 @@ def test_log_write_failure_is_not_a_startup_failure(monkeypatch, tmp_path):
 def test_error_dialog_points_to_the_log(windows):
     _, user = windows
     W.report_error(ValueError('window engine failed'))
-    text = user.MessageBoxW.call_args.args[1]
-    assert 'window engine failed' in text and str(W.log_path()) in text
+    detail, report = user.ErrorDialog.call_args.args
+    assert 'window engine failed' in detail
+    assert 'ValueError: window engine failed' in report
     assert 'ValueError: window engine failed' in W.log_path().read_text(encoding='utf8')
 
 
@@ -148,7 +150,7 @@ def test_error_dialog_without_log_storage(windows, monkeypatch):
     _, user = windows
     monkeypatch.setattr(W, 'log_path', lambda: None)
     W.report_error(ValueError('window engine failed'))
-    assert 'window engine failed' in user.MessageBoxW.call_args.args[1]
+    assert 'window engine failed' in user.ErrorDialog.call_args.args[0]
 
 
 @pytest.mark.parametrize('user_version,machine_version,expected', [
@@ -295,7 +297,7 @@ def test_library_exit_codes_do_not_hide_startup_failures(windows, monkeypatch, c
             raise SystemExit(code)
     assert error.value.code == code
     if code:
-        assert 'exit code 1' in user.MessageBoxW.call_args.args[1]
+        assert 'exit code 1' in user.ErrorDialog.call_args.args[0]
         assert 'SystemExit: 1' in W.log_path().read_text(encoding='utf8')
     else:
         user.MessageBoxW.assert_not_called()

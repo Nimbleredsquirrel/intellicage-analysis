@@ -16,6 +16,7 @@ from nicegui import app, native, run, ui
 import yaml
 import polars as pl
 
+from .diagnostics import show_error
 from .catalogue import analysis_name
 from .board import GraphBoard
 from .graph_editor import draw_editor
@@ -95,6 +96,7 @@ class Explorer:
         self.token = uuid4().hex
         IMPORTS[self.token] = self
         ui.context.client.on_delete(self.cleanup)
+        ui.on_exception(show_error)
         self.build()
         if config and config.is_file():
             ui.timer(.1, self.initial_load, once=True)
@@ -117,9 +119,8 @@ class Explorer:
             self.status.set_text(f'done · {perf_counter() - started:.1f} s')
             return result
         except Exception as exc:
-            from .desktop import error_message
             self.status.set_text('could not finish · see the error message')
-            ui.notify(error_message(exc), type='negative', close_button=True, timeout=10000)
+            show_error(exc)
             return None
         finally:
             self.busy = False
@@ -182,7 +183,7 @@ h1,h2{letter-spacing:-.025em}.plotly-graph-div{border-radius:12px}.muted{color:#
             status.textContent=r.ok?v.datasets+' exports ready — click load folder':v.detail;}}).catch(e=>status.textContent=e.message);"></label><small id="folder-status-{self.token}"></small>''', sanitize=False)
                         ui.button('load folder', on_click=self.load_pending).props('flat').classes('w-full').mark('load-folder')
                         ui.upload(label='ZIP / saved project', auto_upload=True, max_file_size=MAX_UPLOAD,
-                                  on_upload=self.upload, on_rejected=lambda: ui.notify('File exceeds the upload limit', type='negative')).props('accept=.zip,.icage').classes('w-full')
+                                  on_upload=self.upload, on_rejected=lambda: show_error(ValueError('File exceeds the upload limit'))).props('accept=.zip,.icage').classes('w-full')
                     self.folder_list = ui.column().classes('w-full gap-2').mark('selected-folders')
                     self.show_folders()
                     ui.separator().classes('my-4')
@@ -421,7 +422,7 @@ h1,h2{letter-spacing:-.025em}.plotly-graph-div{border-radius:12px}.muted{color:#
         try:
             validate_labels(ds)
         except ValueError as exc:
-            ui.notify(str(exc), type='warning')
+            show_error(exc)
             return
         present = list(dict.fromkeys(d['group'] for d in cfg['datasets']))
         selected = set(cfg['selection']['groups'])
@@ -704,7 +705,7 @@ h1,h2{letter-spacing:-.025em}.plotly-graph-div{border-radius:12px}.muted{color:#
             try:
                 validate_labels(spec)
             except ValueError as exc:
-                ui.notify(str(exc), type='warning')
+                show_error(exc)
                 return
         if await self.add_specs(specs):
             self.import_dialog.close()
@@ -817,6 +818,7 @@ def main(argv=None):
         if not all((Path(d['path']).expanduser() if Path(d['path']).expanduser().is_absolute()
                     else config.parent / d['path']).is_dir() for d in cfg.get('datasets', [])):
             config = None
+    app.on_page_exception(show_error)
     @ui.page('/')
     def index():
         Explorer(config, local=True, native=desktop)

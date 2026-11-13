@@ -118,7 +118,7 @@ async def test_preview_head_tail_full_pagination_sort_schema_and_downloads():
         assert pl.read_csv(io.BytesIO(user.download.http_responses[0].content)).height == 125
         assert ZipFile(io.BytesIO(user.download.http_responses[2].content)).testzip() is None
         with user.client: await view.download('bad')
-        assert user.notify.contains('Unknown table format')
+        await user.should_see('Unknown table format')
 
 
 @pytest.mark.asyncio

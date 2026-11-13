@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ctypes
 import os
+import platform
 import subprocess
 import sys
 import tempfile
@@ -54,13 +55,30 @@ def message(text, flags=0x10):
     return ctypes.windll.user32.MessageBoxW(None, text, TITLE, flags)
 
 
-def report_error(error):
-    record(''.join(traceback.format_exception(error)))
+def error_report(error):
+    trace = ''.join(traceback.format_exception(error))
+    record(trace)
     path = log_path()
+    recent = ''
+    if path is not None:
+        try:
+            with path.open('rb') as source:
+                source.seek(0, 2)
+                source.seek(max(0, source.tell() - 65536))
+                recent = source.read().decode('utf8', errors='replace')
+        except OSError:
+            pass
+    return (f'{TITLE} · error report\n{datetime.now().isoformat(timespec="seconds")}\n'
+            f'OS: {platform.platform()}\nPython: {sys.version}\n'
+            f'Packaged: {bool(getattr(sys, "frozen", False))}\n\n{trace}\nRecent log:\n{recent}')
+
+
+def report_error(error):
+    from .native_errors import error_dialog
+
+    report = error_report(error)
     detail = f'Startup ended with exit code {error.code}.' if isinstance(error, SystemExit) else str(error)
-    text = f'The application could not open its window.\n\n{detail}'
-    if path is not None: text += f'\n\nPlease send this log file to Arina:\n{path}'
-    message(text)
+    error_dialog(detail, report)
 
 
 def webview_version():
@@ -124,7 +142,11 @@ def prepare_bundled_assemblies():
 @contextmanager
 def application_session():
     if not packaged_windows() or '--help' in sys.argv or '-h' in sys.argv:
-        yield True
+        try:
+            yield True
+        except Exception as error:
+            if sys.platform == 'darwin' and getattr(sys, 'frozen', False): report_error(error)
+            raise
         return
     from ctypes import wintypes
 

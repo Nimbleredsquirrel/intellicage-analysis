@@ -12,6 +12,8 @@ from zipfile import ZIP_DEFLATED, ZipFile
 import polars as pl
 from nicegui import run, ui
 
+from .diagnostics import show_error
+
 
 def column_info(table: pl.DataFrame) -> pl.DataFrame:
     missing = table.null_count().row(0, named=True)
@@ -174,7 +176,7 @@ class TablePreview:
             data = await run.io_bound(table_bytes, self.table, kind)
             ui.download.content(data, f'{self.name}.{kind}')
         except (ValueError, OSError) as exc:
-            ui.notify(str(exc), type='negative')
+            show_error(exc)
 
 
 class TableChoice:

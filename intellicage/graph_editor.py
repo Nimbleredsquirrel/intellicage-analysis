@@ -2,6 +2,7 @@ import math
 
 from nicegui import ui
 
+from .diagnostics import show_error
 from .plots import colors_for
 
 
@@ -48,7 +49,7 @@ def draw_editor(owner, project, name, result, window):
         async def apply_positions():
             try: project.edit_layout(name, {key: control.value for key, control in values.items()})
             except ValueError as exc:
-                ui.notify(str(exc), type='negative')
+                show_error(exc)
                 return
             await owner.show_graph()
         ui.button('apply positions', on_click=apply_positions).props('flat').mark('apply-positions')
@@ -84,7 +85,7 @@ def draw_editor(owner, project, name, result, window):
                         project.edit_comparisons(name, {'display': display.value, 'font_size': label_size.value,
                                                        'star_size': star_size.value, 'line_width': line_width.value})
                     except ValueError as exc:
-                        ui.notify(str(exc), type='negative')
+                        show_error(exc)
                         return
                     await owner.show_graph()
                 ui.button('apply comparisons', on_click=apply_comparisons).props('flat').mark('apply-comparisons')
@@ -110,7 +111,7 @@ def draw_editor(owner, project, name, result, window):
                     height = round(width * b / a)
                     if not project.resize_graph(name, {'width': width, 'height': height}): raise ValueError
                 except (ValueError, AttributeError, ZeroDivisionError, OverflowError):
-                    ui.notify('Use a positive width:height ratio with a resulting height of 300–4000 px.', type='negative')
+                    show_error(ValueError('Use a positive width:height ratio with a resulting height of 300–4000 px.'))
                     return
                 window.style(f'width:{width + 26}px;height:{height + 26}px')
             ui.button('apply ratio', on_click=apply_ratio).props('flat').mark('apply-ratio')

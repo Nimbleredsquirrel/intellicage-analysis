@@ -6,6 +6,7 @@ import json
 
 from nicegui import ui
 
+from .diagnostics import show_error
 from .plots import PLOT_CONFIG
 from .catalogue import analysis_name
 from .dashboard_filters import DashboardFilters
@@ -222,7 +223,7 @@ class GraphBoard:
                 try:
                     geometry = await ui.run_javascript(script, timeout=10)
                 except (TimeoutError, RuntimeError) as exc:
-                    ui.notify('Could not read the dashboard layout. Try exporting again.', type='negative')
+                    show_error(exc, 'Could not read the dashboard layout. Try exporting again.')
                     return
                 data = await self.owner.task(dashboard_pdf, config, panels, figures, geometry, status='creating PDF report…')
             if data: ui.download.content(data, 'intellicage-dashboard.pdf', 'application/pdf')

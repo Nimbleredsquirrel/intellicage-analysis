@@ -150,6 +150,46 @@ jobs:
                       assert user32.PostMessageW(window, 0x0010, 0, 0), 'The desktop window could not be closed'
                       assert process.wait(timeout=30) == 0
                       print('Native Windows window opened, loaded its interface, handled a duplicate launch and closed')
+                      process = subprocess.Popen([str(executable), '--check-error-dialog', str(results)],
+                                                 cwd=folder, env=environment)
+                      user32.GetDlgItem.argtypes = [wintypes.HWND, ctypes.c_int]
+                      user32.GetDlgItem.restype = wintypes.HWND
+                      user32.GetWindowTextW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
+                      deadline = time.monotonic() + 45
+                      button = None
+                      while not button:
+                          dialog = user32.FindWindowW('#32770', 'intellicage analysis')
+                          if dialog: button = user32.GetDlgItem(dialog, 100)
+                          if process.poll() is not None or time.monotonic() > deadline:
+                              raise RuntimeError('The startup error dialog did not offer a copy log button')
+                          time.sleep(.1)
+                      label = ctypes.create_unicode_buffer(100)
+                      user32.GetWindowTextW(button, label, len(label))
+                      assert label.value == 'copy log', label.value
+                      user32.PostMessageW(button, 0x00F5, 0, 0)
+                      assert process.wait(timeout=30) == 0
+                      user32.GetClipboardData.argtypes = [wintypes.UINT]
+                      user32.GetClipboardData.restype = wintypes.HANDLE
+                      kernel = ctypes.windll.kernel32
+                      kernel.GlobalLock.argtypes = [wintypes.HANDLE]
+                      kernel.GlobalLock.restype = wintypes.LPVOID
+                      kernel.GlobalUnlock.argtypes = [wintypes.HANDLE]
+                      assert user32.OpenClipboard(None)
+                      try:
+                          memory = user32.GetClipboardData(13)
+                          assert memory
+                          pointer = kernel.GlobalLock(memory)
+                          assert pointer
+                          try:
+                              copied = ctypes.wstring_at(pointer)
+                          finally:
+                              kernel.GlobalUnlock(memory)
+                      finally:
+                          user32.CloseClipboard()
+                      assert 'RuntimeError: startup diagnostic check · мышь' in copied
+                      assert 'Traceback' in copied and 'Python:' in copied and 'OS:' in copied
+                      assert (results / 'error-dialog-closed.txt').read_text() == 'ok'
+                      print('Startup error dialog copied a full Unicode error report without the desktop engine')
                   else:
                       process.terminate()
                       process.wait(timeout=30)

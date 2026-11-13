@@ -38,7 +38,7 @@ async def test_import_requires_user_labels_and_preserves_original_files(config, 
         assert page.import_label_inputs[0][2].value == ''
         with user.client:
             await page.confirm_import()
-        assert user.notify.contains('Group and phase names are required')
+        await user.should_see('Group and phase names are required')
         assert page.import_dialog.value
         with user.client:
             group, lot, phase = page.import_label_inputs[0]
@@ -96,7 +96,7 @@ async def test_multiple_unlabelled_folders_validate_together_before_install(conf
             await page.confirm_import()
         assert page.project is None
         assert page.import_dialog.value
-        assert user.notify.contains('Each export needs its own')
+        await user.should_see('Each export needs its own')
         with user.client:
             page.import_label_inputs[1][1].set_value('second lot')
             await page.confirm_import()
@@ -221,7 +221,7 @@ async def test_settings_labels_colors_and_native_folder(config, tmp_path, monkey
         with user.client:
             await page.download_graph('html')
             await page.add_folders([tmp_path/'missing'])
-        assert user.notify.contains('Folder not found')
+        await user.should_see('Folder not found')
         # folder picker cancellation is harmless
         monkeypatch.setattr(app.native,'main_window',SimpleNamespace(create_file_dialog=AsyncMock(return_value=None), signal_server_shutdown=lambda:None))
         with user.client: await page.native_folder()
@@ -234,7 +234,7 @@ async def test_settings_labels_colors_and_native_folder(config, tmp_path, monkey
             page.edit_labels(0)
             page.label_inputs[0].set_value('')
             await page.relabel()
-        assert user.notify.contains('names are required')
+        await user.should_see('names are required')
         def clear_groups():
             for box in page.group_checkboxes.values(): box.set_value(False)
         with user.client:
@@ -301,11 +301,11 @@ async def test_initial_config_error_handling_busy_and_no_project(config,tmp_path
             await page.show_graph()
             page.busy=False
             assert await page.task(lambda: (_ for _ in ()).throw(ValueError('bad data'))) is None
-        assert user.notify.contains('bad data')
+        await user.should_see('bad data')
         from choreographer.errors import BrowserFailedError
         with user.client:
             assert await page.task(lambda: (_ for _ in ()).throw(BrowserFailedError('technical details'))) is None
-        assert user.notify.contains('Chrome could not start for image export')
+        await user.should_see('Chrome could not start for image export')
         with user.client:
             page.project=None
             await page.save_project();await page.download_graph('html')
@@ -405,9 +405,9 @@ async def test_invalid_initial_configuration_stays_in_empty_app(tmp_path, wait_u
     async def root():pages.append(Explorer(path,local=False,native=False))
     async with user_simulation(root) as user:
         await user.open('/')
-        await wait_until(lambda: bool(user.notify.messages))
+        await wait_until(lambda: any(isinstance(e, ui.dialog) and e.value for e in user.client.elements.values()))
         assert pages[0].project is None
-        assert user.notify.messages
+        await user.should_see(marker='copy-log')
 
 
 @pytest.mark.asyncio
@@ -534,7 +534,7 @@ async def test_plus_adds_multiple_folders_and_skips_overlapping_exports(config, 
         with user.client:
             await page.add_folders([paths[0], tmp_path/'missing'])
         assert page.project is before
-        assert user.notify.contains('Folder not found')
+        await user.should_see('Folder not found')
         dialog.return_value = None
         with user.client:
             await page.native_folder()
@@ -653,7 +653,7 @@ async def test_failed_folder_removal_preserves_current_project(config, monkeypat
         assert page.project is before
         assert len(page.folder_remove_buttons) == 2
         assert all(button.enabled for button in page.folder_remove_buttons)
-        assert user.notify.contains('could not rebuild')
+        await user.should_see('could not rebuild')
 
 
 def visible_plot(page):

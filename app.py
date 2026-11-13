@@ -6,9 +6,19 @@ if __name__ in {'__main__', '__mp_main__'}:
 
     if not chrome_worker():
         prepare_stdio()
-        freeze_support()
+        try:
+            freeze_support()
+        except Exception as error:
+            from intellicage.windows_startup import report_error
+
+            report_error(error)
+            raise SystemExit(1) from error
         if len(sys.argv) == 3 and sys.argv[1] == '--check-exports':
             check_exports(sys.argv[2])
+        elif len(sys.argv) == 3 and sys.argv[1] == '--check-error-dialog':
+            from intellicage.desktop import check_error_dialog
+
+            check_error_dialog(sys.argv[2])
         else:
             from intellicage.windows_startup import application_session
 

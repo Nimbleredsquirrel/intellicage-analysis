@@ -49,6 +49,18 @@ def error_message(error):
     return str(error)
 
 
+def check_error_dialog(destination):
+    from .windows_startup import report_error
+
+    folder = Path(destination)
+    folder.mkdir(parents=True, exist_ok=True)
+    try:
+        raise RuntimeError('startup diagnostic check · мышь')
+    except RuntimeError as error:
+        report_error(error)
+    (folder / 'error-dialog-closed.txt').write_text('ok', encoding='utf8')
+
+
 def check_exports(destination):
     import io
     import json
