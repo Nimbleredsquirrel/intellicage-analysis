@@ -172,7 +172,7 @@ async def test_ui_date_rules_apply_remove_and_restore(config, tmp_path):
             page.window_ranges[name][0]['date_to'].set_value('2025-12-31')
             await page.recalculate()
         assert page.project.tables is old_tables
-        assert user.notify.contains('end on or after')
+        await user.should_see('end on or after')
         with user.client:
             for name, _, _ in page.window_inputs:
                 page.remove_window_range(name, page.window_ranges[name][0])
