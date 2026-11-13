@@ -8,7 +8,8 @@ if __name__ in {'__main__', '__mp_main__'}:
         prepare_stdio()
         try:
             freeze_support()
-        except Exception as error:
+        except (Exception, SystemExit) as error:
+            if isinstance(error, SystemExit) and error.code in (0, None): raise
             from intellicage.windows_startup import report_error
 
             report_error(error)

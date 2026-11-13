@@ -144,7 +144,8 @@ def application_session():
     if not packaged_windows() or '--help' in sys.argv or '-h' in sys.argv:
         try:
             yield True
-        except Exception as error:
+        except (Exception, SystemExit) as error:
+            if isinstance(error, SystemExit) and error.code in (0, None): raise
             if sys.platform == 'darwin' and getattr(sys, 'frozen', False): report_error(error)
             raise
         return

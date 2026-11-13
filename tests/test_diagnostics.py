@@ -72,18 +72,21 @@ async def test_unhandled_interface_error_offers_a_copy_button():
         await user.should_see(marker='copy-log')
 
 
-def test_native_worker_failure_offers_the_log_before_the_worker_exits(monkeypatch):
+@pytest.mark.parametrize('failure', [RuntimeError('native worker failed'), SystemExit(1), SystemExit(0)])
+def test_native_worker_failure_offers_the_log_before_the_worker_exits(monkeypatch, failure):
     import multiprocessing
     from intellicage import desktop
     monkeypatch.setattr(desktop, 'chrome_worker', lambda: False)
     monkeypatch.setattr(desktop, 'prepare_stdio', lambda: None)
-    monkeypatch.setattr(multiprocessing, 'freeze_support', Mock(side_effect=RuntimeError('native worker failed')))
+    monkeypatch.setattr(multiprocessing, 'freeze_support', Mock(side_effect=failure))
     report = Mock()
     monkeypatch.setattr(W, 'report_error', report)
     with pytest.raises(SystemExit) as error:
         runpy.run_path(str(Path(__file__).parents[1] / 'app.py'), run_name='__main__')
-    assert error.value.code == 1
-    assert 'native worker failed' in str(report.call_args.args[0])
+    expected = failure.code if isinstance(failure, SystemExit) else 1
+    assert error.value.code == expected
+    if expected: report.assert_called_once_with(failure)
+    else: report.assert_not_called()
 
 
 def test_packaged_macos_startup_failure_offers_the_system_error_dialog(monkeypatch):
