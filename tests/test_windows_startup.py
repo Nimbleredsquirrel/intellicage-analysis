@@ -38,6 +38,56 @@ def test_only_packaged_windows_uses_startup_helpers(monkeypatch):
     assert W.packaged_windows()
 
 
+def test_downloaded_assemblies_are_prepared_without_touching_other_files(windows, tmp_path):
+    assemblies = [tmp_path / name for name in (
+        'pythonnet/runtime/Python.Runtime.dll',
+        'clr_loader/ffi/dlls/amd64/ClrLoader.dll',
+        'webview/lib/Microsoft.Web.WebView2.Core.dll')]
+    unrelated = [tmp_path / 'experiment.dll', tmp_path / 'webview/lib/data.csv']
+    for path in assemblies + unrelated:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b'original contents')
+        Path(f'{path}:Zone.Identifier').write_text('[ZoneTransfer]\nZoneId=3\n')
+    W.prepare_bundled_assemblies()
+    W.prepare_bundled_assemblies()
+    assert all(path.read_bytes() == b'original contents' for path in assemblies + unrelated)
+    for path in assemblies:
+        with pytest.raises(FileNotFoundError): Path(f'{path}:Zone.Identifier').read_bytes()
+    assert all('ZoneId=3' in Path(f'{path}:Zone.Identifier').read_text() for path in unrelated)
+
+
+def test_source_launch_does_not_change_download_marks(monkeypatch):
+    monkeypatch.setattr(W, 'packaged_windows', lambda: False)
+    remove = Mock()
+    monkeypatch.setattr(W.os, 'remove', remove)
+    W.prepare_bundled_assemblies()
+    remove.assert_not_called()
+
+
+def test_unwritable_download_mark_has_an_actionable_error(windows, monkeypatch, tmp_path):
+    assembly = tmp_path / 'pythonnet/runtime/Python.Runtime.dll'
+    assembly.parent.mkdir(parents=True)
+    assembly.write_bytes(b'assembly')
+    monkeypatch.setattr(W.os, 'remove', Mock(side_effect=PermissionError('read only')))
+    with pytest.raises(RuntimeError, match='Properties, select Unblock') as error:
+        W.prepare_bundled_assemblies()
+    assert isinstance(error.value.__cause__, PermissionError)
+    assert assembly.read_bytes() == b'assembly'
+
+
+def test_assembly_links_outside_the_bundle_are_not_modified(windows, monkeypatch, tmp_path):
+    assembly = tmp_path / 'pythonnet/runtime/Python.Runtime.dll'
+    assembly.parent.mkdir(parents=True)
+    assembly.write_bytes(b'assembly')
+    original = Path.resolve
+    monkeypatch.setattr(Path, 'resolve', lambda path, **kwargs:
+                        tmp_path.parent / 'external.dll' if path == assembly else original(path, **kwargs))
+    remove = Mock()
+    monkeypatch.setattr(W.os, 'remove', remove)
+    W.prepare_bundled_assemblies()
+    remove.assert_not_called()
+
+
 def test_windowed_errors_are_written_as_utf8_and_workers_append(windows, monkeypatch):
     streams = []
     for args in [['app'], ['app', '--multiprocessing-fork']]:

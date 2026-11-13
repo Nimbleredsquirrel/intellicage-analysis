@@ -102,6 +102,25 @@ def ensure_webview(*, interactive=True):
     return True
 
 
+def prepare_bundled_assemblies():
+    if not packaged_windows(): return
+    root = Path(sys._MEIPASS).resolve()
+    # explorer can mark dlls extracted from a downloaded zip
+    for package in ('pythonnet/runtime', 'clr_loader/ffi/dlls', 'webview/lib'):
+        for path in (root / package).rglob('*.dll'):
+            if not path.resolve().is_relative_to(root): continue
+            try:
+                os.remove(f'{path}:Zone.Identifier')
+                record(f'prepared bundled assembly: {path.relative_to(root)}')
+            except FileNotFoundError:
+                pass
+            except OSError as error:
+                raise RuntimeError(
+                    'Windows blocked a bundled window component. Right-click the downloaded ZIP, '
+                    'choose Properties, select Unblock, then extract it into a new folder and try again. '
+                    f'Component: {path.name}') from error
+
+
 @contextmanager
 def application_session():
     if not packaged_windows() or '--help' in sys.argv or '-h' in sys.argv:
@@ -139,6 +158,7 @@ def application_session():
         if not ensure_webview(interactive='--check-window' not in sys.argv):
             yield False
             return
+        prepare_bundled_assemblies()
         from webview.platforms.winforms import renderer
         if renderer != 'edgechromium':
             raise RuntimeError('The Windows window engine could not load. WebView2 and Microsoft .NET Framework 4.6.2 or newer are required.')

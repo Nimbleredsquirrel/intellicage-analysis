@@ -81,6 +81,21 @@ jobs:
                   with zipfile.ZipFile(archive) as packed:
                       packed.extractall(folder)
                   executable = folder / 'intellicage analysis' / 'intellicage analysis.exe'
+                  # match explorer extraction of a downloaded zip
+                  bundle = executable.parent / '_internal'
+                  tagged = []
+                  for path in bundle.rglob('*.dll'):
+                      Path(f'{path}:Zone.Identifier').write_text('[ZoneTransfer]\nZoneId=3\n', encoding='ascii')
+                      tagged.append(path)
+                  assert tagged, 'No bundled DLLs found for the downloaded-file check'
+                  print(f'Added internet download marks to {len(tagged)} bundled DLLs')
+                  probe = subprocess.run(['poetry', 'run', 'python', '-c',
+                      'import sys; from clr_loader import get_netfx; '
+                      'get_netfx().get_assembly(sys.argv[1]).get_function("Python.Runtime.Loader.Initialize")',
+                      str(bundle / 'pythonnet/runtime/Python.Runtime.dll')],
+                      capture_output=True, text=True, timeout=30)
+                  assert probe.returncode and 'Failed to resolve Python.Runtime.Loader.Initialize' in probe.stderr, probe.stderr
+                  print('Reproduced the .NET loader failure before preparing downloaded DLLs')
               else:
                   subprocess.run(['ditto', '-x', '-k', str(archive.resolve()), str(folder)], check=True)
                   executable = folder / 'intellicage analysis.app/Contents/MacOS/intellicage analysis'
@@ -96,6 +111,15 @@ jobs:
                   if error.exists():
                       print(error.read_text(encoding='utf8'))
                   process.check_returncode()
+                  if os.name == 'nt':
+                      runtime = bundle / 'pythonnet/runtime/Python.Runtime.dll'
+                      assert runtime.is_file(), 'The Python/.NET bridge is missing from the package'
+                      try:
+                          Path(f'{runtime}:Zone.Identifier').read_bytes()
+                      except FileNotFoundError:
+                          pass
+                      else:
+                          raise AssertionError('The bundled assembly is still blocked')
                   assert json.loads((results / 'check.json').read_text()) == {'ok': True}
                   print('Desktop exports verified: PNG, SVG, dashboard PDF, CSV, TXT, XLSX; Welch, mixed ANOVA and LMM checked')
                   process = subprocess.Popen([str(executable), '--check-window', str(results)],

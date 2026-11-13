@@ -67,6 +67,9 @@ def check_exports(destination):
     folder.mkdir(parents=True, exist_ok=True)
     try:
         if sys.platform == 'win32':
+            from .windows_startup import prepare_bundled_assemblies
+
+            prepare_bundled_assemblies()
             from webview.platforms.winforms import renderer
             if renderer != 'edgechromium':
                 raise RuntimeError('Microsoft Edge WebView2 Runtime is required for the desktop window')
